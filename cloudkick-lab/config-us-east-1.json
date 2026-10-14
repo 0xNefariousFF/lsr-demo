@@ -1,0 +1,12 @@
+{
+  "name": "cloudkick-lsr-us1b",
+  "account": "242850025859",
+  "region": "us-east-1",
+  "owner": "Miguel Lopez",
+  "is_isolated_lab": true,
+  "allowed_cidr": "152.37.122.227/32",
+  "engine": "converse",
+  "mode": "vulnerable",
+  "model_id": "us.amazon.nova-pro-v1:0",
+  "hours": 8
+}
