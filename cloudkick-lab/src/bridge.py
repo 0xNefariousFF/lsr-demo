@@ -9,9 +9,9 @@ lam=boto3.client('lambda')
 BUILD_SHA=os.environ.get('BUILD_SHA','unknown')
 ROOT=Path(__file__).resolve().parent
 ASSETS={
-    '/assets/cloudkick-returns-hero.png':('image/png','cloudkick-returns-hero.png'),
-    '/assets/cloudrunner-grey.png':('image/png','cloudrunner-grey.png'),
-    '/assets/trailstep-black.png':('image/png','trailstep-black.png'),
+    '/assets/cloudkick-returns-hero.jpg':('image/jpeg','cloudkick-returns-hero.jpg'),
+    '/assets/cloudrunner-grey.webp':('image/webp','cloudrunner-grey.webp'),
+    '/assets/trailstep-black.webp':('image/webp','trailstep-black.webp'),
     '/assets/inter-400.woff2':('font/woff2','inter-400.woff2'),
     '/assets/inter-600.woff2':('font/woff2','inter-600.woff2'),
     '/assets/inter-700.woff2':('font/woff2','inter-700.woff2'),

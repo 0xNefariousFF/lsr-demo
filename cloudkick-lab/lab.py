@@ -108,7 +108,7 @@ def resolve_model(session, c):
 def source_manifest():
     digest = hashlib.sha256()
     for path in sorted((ROOT / 'src').rglob('*')):
-        if path.is_file() and path.suffix in ('.py', '.html', '.png', '.woff2'):
+        if path.is_file() and path.suffix in ('.py', '.html', '.jpg', '.webp', '.woff2'):
             digest.update(str(path.relative_to(ROOT / 'src')).encode())
             digest.update(b'\0')
             digest.update(path.read_bytes())

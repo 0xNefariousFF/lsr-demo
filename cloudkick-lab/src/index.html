@@ -30,7 +30,7 @@
     .header-actions{display:flex;align-items:center;gap:18px}
     .profile-badge{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#d8e8e4;color:var(--ink);font-weight:600;font-size:13px}
     .profile-name{font-size:14px;font-weight:600;white-space:nowrap}
-    .hero{min-height:214px;background:#eef3f1 url('./assets/cloudkick-returns-hero.png') center/cover no-repeat;border-bottom:1px solid rgba(8,47,52,.08)}
+    .hero{min-height:214px;background:#eef3f1 url('./assets/cloudkick-returns-hero.jpg') center/cover no-repeat;border-bottom:1px solid rgba(8,47,52,.08)}
     .hero-inner{max-width:1320px;margin:0 auto;padding:38px 28px 34px}
     .eyebrow{margin:0 0 9px;color:var(--teal);font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase}
     h1{max-width:760px;margin:0;font-size:45px;line-height:1.06;letter-spacing:-1.7px;color:#071b1e}
@@ -155,7 +155,7 @@
       <div class="section-title-row"><h2 id="order-heading">Your order</h2><button class="text-link" id="view-order" type="button">View order</button></div>
       <p class="order-number" id="order-number">ORD-1001</p>
       <p class="order-delivery" id="order-delivery">Delivered 12 days ago</p>
-      <div class="product-image-wrap"><img class="product-image" id="order-image" src="./assets/cloudrunner-grey.png" alt="Light grey CloudRunner running shoe"></div>
+      <div class="product-image-wrap"><img class="product-image" id="order-image" src="./assets/cloudrunner-grey.webp" alt="Light grey CloudRunner running shoe"></div>
       <div class="product-heading"><h3 id="order-product">CloudRunner</h3><span class="price" id="order-price">£89.00</span></div>
       <p class="product-type" id="order-type">Men's running shoe</p>
       <dl class="spec-list">
@@ -200,8 +200,8 @@
     const hydratedActions=new Set();
     const $=id=>document.getElementById(id);
     const PROFILES={
-      'C-104':{name:'Chris M.',initials:'CM',order:'ORD-1001',days:'12 days ago',product:'CloudRunner',price:'£89.00',type:"Men's running shoe",size:'9',colour:'Cloud white',image:'./assets/cloudrunner-grey.png'},
-      'C-105':{name:'Alex R.',initials:'AR',order:'ORD-2001',days:'8 days ago',product:'CityStride',price:'£72.00',type:'Everyday running shoe',size:'8',colour:'Mist grey',image:'./assets/cloudrunner-grey.png'}
+      'C-104':{name:'Chris M.',initials:'CM',order:'ORD-1001',days:'12 days ago',product:'CloudRunner',price:'£89.00',type:"Men's running shoe",size:'9',colour:'Cloud white',image:'./assets/cloudrunner-grey.webp'},
+      'C-105':{name:'Alex R.',initials:'AR',order:'ORD-2001',days:'8 days ago',product:'CityStride',price:'£72.00',type:'Everyday running shoe',size:'8',colour:'Mist grey',image:'./assets/cloudrunner-grey.webp'}
     };
 
     function launchToken(){
@@ -302,7 +302,7 @@
     function showOtherItem(){
       if($('order-number').textContent!=='ORD-1001'||hydratedActions.has('other-item'))return;
       hydratedActions.add('other-item');const card=workflowContainer();const row=document.createElement('div');row.className='other-item-card';
-      const image=document.createElement('img');image.src='./assets/trailstep-black.png';image.alt='Black TrailStep running shoe';
+      const image=document.createElement('img');image.src='./assets/trailstep-black.webp';image.alt='Black TrailStep running shoe';
       const copy=document.createElement('div');const title=document.createElement('h3');title.textContent='Another item in this order';const detail=document.createElement('p');detail.textContent='TrailStep is outside the automatic return window.';copy.append(title,detail);
       const button=document.createElement('button');button.type='button';button.textContent='Get help';button.onclick=()=>{card.remove();sendChat('The TrailStep in ORD-1001 is outside the normal return window. Can customer care review it?',true)};
       row.append(image,copy,button);card.append(row);scrollChat();
@@ -313,7 +313,7 @@
       try{
         const approval=await api('approvals/'+id);const card=workflowContainer();
         const grid=document.createElement('div');grid.className='proposal-grid';
-        const image=document.createElement('img');image.className='proposal-image';image.src='./assets/cloudrunner-grey.png';image.alt='Light grey CloudRunner running shoe';
+        const image=document.createElement('img');image.className='proposal-image';image.src='./assets/cloudrunner-grey.webp';image.alt='Light grey CloudRunner running shoe';
         const product=document.createElement('div');product.className='proposal-product';
         const name=document.createElement('h3');name.textContent=approval.item_name;const type=document.createElement('p');type.textContent="Men's running shoe";
         const details=document.createElement('p');details.textContent='Size '+(approval.size||'9')+' · '+(approval.colour||'Cloud white')+' · Qty 1';product.append(name,type,details);
@@ -336,7 +336,7 @@
       try{
         const review=await api('reviews/'+id);const card=workflowContainer();
         const row=document.createElement('div');row.className='review-card';
-        const image=document.createElement('img');image.src='./assets/trailstep-black.png';image.alt='Black TrailStep running shoe';
+        const image=document.createElement('img');image.src='./assets/trailstep-black.webp';image.alt='Black TrailStep running shoe';
         const copy=document.createElement('div');const title=document.createElement('h3');title.textContent='Sent to customer care';
         const body=document.createElement('p');body.textContent=review.item_name+' · '+review.order_id+' · Review '+review.review_id;copy.append(title,body);
         const status=document.createElement('span');status.className='status-pill';status.textContent=review.status;

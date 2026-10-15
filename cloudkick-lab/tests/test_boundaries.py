@@ -126,8 +126,12 @@ class BridgeBoundaries(unittest.TestCase):
         self.db.get_item.return_value={'Item':{'subject':'C-104','status':'complete','answer':'Review the return.','ui_actions':json.dumps([{'type':'return_approval','id':'a'*24}])}}
         r=self.call('/jobs/'+'a'*32);self.assertEqual(r['statusCode'],200);self.assertEqual(json.loads(r['body'])['actions'][0]['type'],'return_approval')
     def test_static_assets_are_public_and_base64_encoded(self):
-        r=bridge.handler({'path':'/assets/cloudrunner-grey.png','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
-        self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/png')
+        r=bridge.handler({'path':'/assets/cloudrunner-grey.webp','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
+        self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/webp')
+    def test_shared_lambda_source_stays_small_for_direct_upload(self):
+        source=Path(__file__).resolve().parents[1]/'src'
+        size=sum(path.stat().st_size for path in source.rglob('*') if path.is_file() and '__pycache__' not in path.parts)
+        self.assertLess(size,1_000_000,'Optimise UI assets or move them out of the shared Lambda archive')
     def test_foreign_approval_is_not_disclosed(self):
         self.db.get_item.return_value={'Item':{'subject':'C-105','approval_id':'a'*24,'status':'pending','item_name':'other customer item'}}
         r=self.call('/approvals/'+'a'*24);self.assertEqual(r['statusCode'],404);self.assertNotIn('other customer item',r['body'])
