@@ -107,9 +107,9 @@ def resolve_model(session, c):
 
 def source_manifest():
     digest = hashlib.sha256()
-    for path in sorted((ROOT / 'src').iterdir()):
-        if path.is_file() and path.suffix in ('.py', '.html'):
-            digest.update(path.name.encode())
+    for path in sorted((ROOT / 'src').rglob('*')):
+        if path.is_file() and path.suffix in ('.py', '.html', '.png', '.woff2'):
+            digest.update(str(path.relative_to(ROOT / 'src')).encode())
             digest.update(b'\0')
             digest.update(path.read_bytes())
     code_sha = digest.hexdigest()
@@ -203,13 +203,13 @@ def seed(session, state):
         {
             'order_id': 'ORD-1001', 'customer_id': 'C-104',
             'lines': [
-                {'line_id': 'L1', 'name': 'CloudRunner', 'price_gbp': '89.00', 'days_since_delivery': 12, 'reason': 'defect'},
-                {'line_id': 'L2', 'name': 'TrailStep', 'price_gbp': '115.00', 'days_since_delivery': 45, 'reason': 'change_of_mind'},
+                {'line_id': 'L1', 'name': 'CloudRunner', 'price_gbp': '89.00', 'size': '9', 'colour': 'Cloud white', 'days_since_delivery': 12, 'reason': 'defect'},
+                {'line_id': 'L2', 'name': 'TrailStep', 'price_gbp': '115.00', 'size': '10', 'colour': 'Black / deep teal', 'days_since_delivery': 45, 'reason': 'change_of_mind'},
             ],
         },
         {
             'order_id': 'ORD-2001', 'customer_id': 'C-105',
-            'lines': [{'line_id': 'L1', 'name': 'CityStride', 'price_gbp': '72.00', 'days_since_delivery': 8, 'reason': 'unworn'}],
+            'lines': [{'line_id': 'L1', 'name': 'CityStride', 'price_gbp': '72.00', 'size': '8', 'colour': 'Mist grey', 'days_since_delivery': 8, 'reason': 'unworn'}],
         },
     ]
     for order in orders:
@@ -258,8 +258,16 @@ def deploy(c):
     save(state_path(c), state)
     seed(session, state)
     print('Deployment and fixture seed complete. URL:', state['outputs']['ApiUrl'])
-    print('Private tokens and manifest:', state_path(c).name, '(mode 0600; tokens are not printed)')
+    print('Private session material and manifest:', state_path(c).name, '(mode 0600; keep the launch links below off shared screens)')
     print('Build:', state['build_sha'], 'Mode:', state['mode'], 'Model:', state['model_id'])
+    print_launch_links(state)
+
+
+def print_launch_links(state):
+    base = state['outputs']['ApiUrl']
+    print('Customer journey:', base + '#session=' + state['tokens']['C-104'])
+    print('External assessment:', base + '#session=' + state['tokens']['C-105'])
+    print('The session value stays in the URL fragment, is saved for this browser tab, and is removed from the address bar after sign-in.')
 
 
 def require_state(c):
@@ -382,7 +390,7 @@ def cleanup(c, state):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['plan', 'deploy', 'seed', 'reset', 'evidence', 'failures', 'replay', 'freeze', 'unfreeze', 'cleanup'])
+    parser.add_argument('command', choices=['plan', 'deploy', 'links', 'seed', 'reset', 'evidence', 'failures', 'replay', 'freeze', 'unfreeze', 'cleanup'])
     parser.add_argument('--config', default='config.json')
     parser.add_argument('--job')
     parser.add_argument('--dest', default='evidence')
@@ -394,8 +402,11 @@ def main():
     if args.command == 'deploy':
         deploy(config)
         return
-    session = clients(config)
     state = require_state(config)
+    if args.command == 'links':
+        print_launch_links(state)
+        return
+    session = clients(config)
     if args.command == 'cleanup':
         cleanup(config, state)
     elif args.command == 'seed':

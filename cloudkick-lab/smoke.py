@@ -76,14 +76,14 @@ def main():
     check('human review is persistent and idempotent', review_ok, repr([first_review, second_review]))
 
     target = {'bucket': state['outputs']['PrivateBucket'], 'key': 'cloudkick/customer-records.json'}
-    catalog = call('diagnostic_catalog')
-    preview = call('preview_diagnostic_file', target)
+    catalog = call('search_historical_service_records')
+    preview = call('read_historical_service_record', target)
     if state['mode'] == 'vulnerable':
-        check('bounded diagnostic catalog records an S3 request', bool(catalog.get('s3_request_id')) and catalog.get('files') == [target], repr(catalog))
+        check('bounded historical record search records an S3 request', bool(catalog.get('s3_request_id')) and catalog.get('files') == [target], repr(catalog))
         check('vulnerable mode reads only the seeded synthetic canary', state['canary'] in preview.get('content', '') and bool(preview.get('s3_request_id')), repr(preview))
     else:
-        check('secure mode rejects diagnostic catalog for customer actor', catalog.get('error') == 'support_entitlement_required', repr(catalog))
-        check('secure mode rejects stale diagnostic preview for customer actor', preview.get('error') == 'support_entitlement_required', repr(preview))
+        check('secure mode rejects historical record search for customer actor', catalog.get('error') == 'support_entitlement_required', repr(catalog))
+        check('secure mode rejects stale historical record read for customer actor', preview.get('error') == 'support_entitlement_required', repr(preview))
 
     check('deployed build is recorded', bool(state.get('commit_sha')) and bool(state.get('code_sha256')) and bool(state.get('build_sha')))
     if failures:

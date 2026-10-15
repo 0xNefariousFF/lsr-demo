@@ -1,4 +1,4 @@
-import os,json,time,uuid,hashlib,re
+import os,json,time,uuid,hashlib,re,base64
 from decimal import Decimal
 from pathlib import Path
 import boto3
@@ -7,16 +7,30 @@ from boto3.dynamodb.conditions import Key
 table=boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
 lam=boto3.client('lambda')
 BUILD_SHA=os.environ.get('BUILD_SHA','unknown')
+ROOT=Path(__file__).resolve().parent
+ASSETS={
+    '/assets/cloudkick-returns-hero.png':('image/png','cloudkick-returns-hero.png'),
+    '/assets/cloudrunner-grey.png':('image/png','cloudrunner-grey.png'),
+    '/assets/trailstep-black.png':('image/png','trailstep-black.png'),
+    '/assets/inter-400.woff2':('font/woff2','inter-400.woff2'),
+    '/assets/inter-600.woff2':('font/woff2','inter-600.woff2'),
+    '/assets/inter-700.woff2':('font/woff2','inter-700.woff2'),
+}
 
 def log(event,context,**fields):
     print(json.dumps({'event':event,'build_sha':BUILD_SHA,'lambda_request_id':getattr(context,'aws_request_id','local'),**fields},separators=(',',':')))
 
 def reply(status,obj,html=False):
-    return {'statusCode':status,'headers':{'Content-Type':'text/html; charset=utf-8' if html else 'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"},'body':obj if html else json.dumps(obj,default=lambda v:int(v) if isinstance(v,Decimal) else str(v))}
+    return {'statusCode':status,'headers':{'Content-Type':'text/html; charset=utf-8' if html else 'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"},'body':obj if html else json.dumps(obj,default=lambda v:int(v) if isinstance(v,Decimal) else str(v))}
+
+def asset_reply(path):
+    content_type,name=ASSETS[path]
+    return {'statusCode':200,'headers':{'Content-Type':content_type,'Cache-Control':'public, max-age=3600, immutable','X-Content-Type-Options':'nosniff'},'isBase64Encoded':True,'body':base64.b64encode((ROOT/'assets'/name).read_bytes()).decode()}
 
 def handler(event,context):
     path=event.get('path','/');method=event.get('httpMethod','GET')
-    if path=='/' and method=='GET':return reply(200,Path('index.html').read_text(),True)
+    if path=='/' and method=='GET':return reply(200,(ROOT/'index.html').read_text(),True)
+    if method=='GET' and path in ASSETS:return asset_reply(path)
     if int(os.environ['LAB_EXPIRES'])<time.time():return reply(403,{'error':'lab_expired'})
     headers={k.lower():v for k,v in (event.get('headers') or {}).items()}
     raw=headers.get('authorization','')
@@ -41,12 +55,15 @@ def handler(event,context):
             item=table.get_item(Key={'pk':'J#'+job,'sk':'STATE'},ConsistentRead=True).get('Item',{})
             if item.get('subject')!=subject:return reply(404,{'error':'not_found'})
             # Customer never receives internal tool output or trace in this route.
-            return reply(200,{k:item[k] for k in ('status','answer') if k in item})
+            result={k:item[k] for k in ('status','answer') if k in item}
+            if item.get('ui_actions'):
+                result['actions']=json.loads(item['ui_actions'])
+            return reply(200,result)
         if method=='GET' and path.startswith('/approvals/'):
             aid=path.rsplit('/',1)[1]
             item=table.get_item(Key={'pk':'A#'+aid,'sk':'STATE'},ConsistentRead=True).get('Item',{})
             if item.get('subject')!=subject:return reply(404,{'error':'not_found'})
-            return reply(200,{k:item[k] for k in ('approval_id','status','order_id','line_id','item_name','amount_gbp','expiry')})
+            return reply(200,{k:item[k] for k in ('approval_id','status','order_id','line_id','item_name','amount_gbp','reason','size','colour','return_method','expiry') if k in item})
         if method=='GET' and path.startswith('/reviews/'):
             rid=path.rsplit('/',1)[1]
             if not re.fullmatch(r'REV-[A-F0-9]{12}',rid):raise ValueError('invalid_review')

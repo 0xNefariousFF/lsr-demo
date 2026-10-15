@@ -162,8 +162,8 @@ business operation.
 
 | Tool | Vulnerable behaviour | Lab boundary |
 | --- | --- | --- |
-| diagnostic_catalog | Lists the configured synthetic archive without verifying a support entitlement | One prefix in one lab bucket |
-| preview_diagnostic_file | Reads the discovered object without verifying a support entitlement | One exact object, maximum 8 KiB |
+| search_historical_service_records | Searches the configured synthetic service archive without verifying a support entitlement | One prefix in one lab bucket |
+| read_historical_service_record | Reads the discovered object without verifying a support entitlement | One exact object, maximum 8 KiB |
 
 Customer identity is never a model-supplied tool parameter.
 
@@ -183,7 +183,10 @@ the presentation will not wait for Terraform to apply changes on stage.
 
 ## 9. Perspective A: normal customer story
 
-The customer receives only the application URL and C-104 token.
+The customer receives a C-104 launch link. Its URL fragment contains a short-lived
+workshop bearer value that is consumed by the page, stored for that browser tab and
+removed from the address bar. The underlying identity boundary is retained without
+asking the customer to copy a token into the retail experience.
 
 1. Ask KickAssist to explain the return policy.
 2. Ask for the return options for ORD-1001.
@@ -221,7 +224,7 @@ Claims are separated:
 | Observation | What it proves |
 | --- | --- |
 | Agent describes diagnostics | Capability disclosure only |
-| Tool evidence records diagnostic_catalog | Model selected the discovery tool |
+| Tool evidence records search_historical_service_records | Model selected the discovery tool |
 | Tool evidence records successful preview | Action used its AWS authority |
 | CloudTrail records GetObject | AWS confirms principal, object and success |
 | Customer answer contains the canary | Confirmed customer disclosure |

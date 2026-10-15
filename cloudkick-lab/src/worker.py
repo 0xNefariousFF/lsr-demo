@@ -15,12 +15,13 @@ def converse(prompt,attrs,session,previous):
     client=boto3.client('bedrock-runtime',config=cfg)
     lam=boto3.client('lambda',config=cfg)
     messages=previous+[{'role':'user','content':[{'text':prompt}]}]
+    ui_actions=[]
     for _ in range(6):
         r=client.converse(modelId=os.environ['MODEL_ID'],system=[{'text':INSTRUCTIONS}],messages=messages,toolConfig={'tools':converse_tools(os.environ['LAB_MODE'])},inferenceConfig={'maxTokens':1800,'temperature':0})
         m=r['output']['message'];messages.append(m)
         uses=[b['toolUse'] for b in m['content'] if 'toolUse' in b]
         if not uses:
-            return '\n'.join(b.get('text','') for b in m['content']),messages
+            return '\n'.join(b.get('text','') for b in m['content']),messages,ui_actions
         results=[]
         for u in uses:
             evt={'messageVersion':'1.0','actionGroup':'CloudKick','function':u['name'],'parameters':[{'name':k,'type':'string','value':str(v)} for k,v in u['input'].items()],'sessionId':session,'sessionAttributes':attrs}
@@ -29,7 +30,12 @@ def converse(prompt,attrs,session,previous):
             if raw.get('FunctionError'):
                 raise RuntimeError('action_invocation_failed')
             body=payload['response']['functionResponse']['responseBody']['TEXT']['body']
-            results.append({'toolResult':{'toolUseId':u['toolUseId'],'content':[{'json':json.loads(body)}]}})
+            data=json.loads(body)
+            if u['name']=='request_return' and data.get('approval_id'):
+                ui_actions.append({'type':'return_approval','id':data['approval_id']})
+            elif u['name']=='request_human_review' and data.get('review_id'):
+                ui_actions.append({'type':'human_review','id':data['review_id']})
+            results.append({'toolResult':{'toolUseId':u['toolUseId'],'content':[{'json':data}]}})
         messages.append({'role':'user','content':results})
     raise RuntimeError('tool_turn_limit')
 
@@ -42,7 +48,7 @@ def classic(prompt,attrs,session,context=None):
         elif 'trace' in e:traces+=1
         elif any(k.endswith('Exception') for k in e):raise RuntimeError(str(list(e)))
     log('agent_completed',context,session=session,trace_events=traces)
-    return ''.join(text),[]
+    return ''.join(text),[],[]
 
 def handler(event,context):
     key={'pk':'J#'+event['job'],'sk':'STATE'}
@@ -60,13 +66,14 @@ def handler(event,context):
         if len(previous)>30:raise ValueError('conversation_limit_start_new_session')
         attrs=sign_context(r['subject'],event['job'],r['session'],actor_type='customer')
         if os.environ['ENGINE']=='classic':
-            answer,history=classic(r['prompt'],attrs,r['session'],context)
+            answer,history,ui_actions=classic(r['prompt'],attrs,r['session'],context)
         else:
-            answer,history=converse(r['prompt'],attrs,r['session'],previous)
+            answer,history,ui_actions=converse(r['prompt'],attrs,r['session'],previous)
         hist=json.dumps(history)
         if len(hist.encode())>180000:raise ValueError('conversation_limit_start_new_session')
         table.update_item(Key=skey,UpdateExpression='SET history=:h',ExpressionAttributeValues={':h':hist})
-        table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':answer[:24000]})
+        unique_actions=list({(item['type'],item['id']):item for item in ui_actions}.values())
+        table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a, ui_actions=:u',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':answer[:24000],':u':json.dumps(unique_actions)})
         log('job_completed',context,job=event['job'],subject=r['subject'],answer_chars=len(answer))
     except Exception as ex:
         error_code=getattr(ex,'response',{}).get('Error',{}).get('Code')

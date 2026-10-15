@@ -44,7 +44,7 @@ Acceptance:
 
 Priority: P0
 
-- [x] Retain `diagnostic_catalog` and `preview_diagnostic_file` only in vulnerable mode.
+- [x] Retain `search_historical_service_records` and `read_historical_service_record` only in vulnerable mode.
 - [x] Keep discovery to one prefix and preview to one exact synthetic object.
 - [x] Record the S3 request ID for both ListObjectsV2 and GetObject.
 - [x] Add a support-entitlement field to signed context for the secure handler check.

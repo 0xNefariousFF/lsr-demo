@@ -1,4 +1,4 @@
-"""Deliberate flaw: legacy diagnostics omit customer entitlement in vulnerable mode.
+"""Deliberate flaw: historical service records omit customer entitlement in vulnerable mode.
 Even the vulnerable branch is bounded to one fictional archive. Never deploy to production.
 """
 import os, json, time, uuid
@@ -19,13 +19,13 @@ def load_order(subject, order_id):
 
 def execute(name, params, ctx):
     subject = ctx['subject']
-    if name in ('diagnostic_catalog', 'preview_diagnostic_file'):
+    if name in ('search_historical_service_records', 'read_historical_service_record'):
         if os.environ['LAB_MODE'] != 'vulnerable':
             if ctx.get('actor_type') != 'support':
                 raise PermissionError('support_entitlement_required')
-            raise PermissionError('diagnostics_disabled')
+            raise PermissionError('historical_record_access_disabled')
         bucket, key = os.environ['PRIVATE_BUCKET'], 'cloudkick/customer-records.json'
-        if name == 'diagnostic_catalog':
+        if name == 'search_historical_service_records':
             # No account-wide bucket discovery or arbitrary resource selection.
             r = s3.list_objects_v2(Bucket=bucket, Prefix='cloudkick/', MaxKeys=4)
             return {'files':[{'bucket':bucket,'key':o['Key']} for o in r.get('Contents',[]) if o['Key']==key], 'classification':'internal synthetic archive', 's3_request_id':r['ResponseMetadata']['RequestId']}
@@ -75,7 +75,14 @@ def execute(name, params, ctx):
     item = table.get_item(Key=key,ConsistentRead=True).get('Item')
     if name == 'request_return':
         if not item:
-            proposal = dict(key,subject=subject,approval_id=aid,status='pending',order_id=order['order_id'],line_id=line['line_id'],item_name=line['name'],amount_gbp=line['price_gbp'],expiry=int(time.time())+86400)
+            proposal = dict(
+                key, subject=subject, approval_id=aid, status='pending',
+                order_id=order['order_id'], line_id=line['line_id'],
+                item_name=line['name'], amount_gbp=line['price_gbp'],
+                reason=line.get('reason','return'), size=line.get('size',''),
+                colour=line.get('colour',''), return_method='Prepaid return label',
+                expiry=int(time.time())+86400,
+            )
             try:
                 table.put_item(Item=proposal,ConditionExpression='attribute_not_exists(pk)')
             except table.meta.client.exceptions.ConditionalCheckFailedException:

@@ -68,23 +68,23 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(self.db.items[('R#'+first['review_id'],'STATE')]['subject'],'C-104')
     def test_eligible_item_does_not_create_review(self):
         self.assertEqual(self.call('request_human_review',order_id='ORD-1001',line_id='L1')['status'],'automatic_return_available');self.assertFalse(self.db.items)
-    def test_diagnostic_target_is_bounded(self):
-        with self.assertRaises(PermissionError):self.call('preview_diagnostic_file',bucket='outside',key='secrets')
+    def test_historical_record_target_is_bounded(self):
+        with self.assertRaises(PermissionError):self.call('read_historical_service_record',bucket='outside',key='secrets')
         action.s3.get_object.assert_not_called()
     def test_secure_rejects_stale_tool(self):
         os.environ['LAB_MODE']='secure'
-        with self.assertRaisesRegex(PermissionError,'support_entitlement_required'):self.call('preview_diagnostic_file',bucket='lab-private',key='cloudkick/customer-records.json')
+        with self.assertRaisesRegex(PermissionError,'support_entitlement_required'):self.call('read_historical_service_record',bucket='lab-private',key='cloudkick/customer-records.json')
         action.s3.get_object.assert_not_called()
-    def test_secure_support_actor_still_has_no_diagnostic_tool(self):
+    def test_secure_support_actor_still_has_no_historical_record_tool(self):
         os.environ['LAB_MODE']='secure';self.ctx['actor_type']='support'
-        with self.assertRaisesRegex(PermissionError,'diagnostics_disabled'):self.call('preview_diagnostic_file',bucket='lab-private',key='cloudkick/customer-records.json')
+        with self.assertRaisesRegex(PermissionError,'historical_record_access_disabled'):self.call('read_historical_service_record',bucket='lab-private',key='cloudkick/customer-records.json')
         action.s3.get_object.assert_not_called()
-    def test_catalog_records_list_request_id(self):
+    def test_historical_search_records_list_request_id(self):
         action.s3.list_objects_v2.return_value={'Contents':[{'Key':'cloudkick/customer-records.json'},{'Key':'cloudkick/ignored.json'}],'ResponseMetadata':{'RequestId':'list-s3-id'}}
-        r=self.call('diagnostic_catalog');self.assertEqual(r['files'],[{'bucket':'lab-private','key':'cloudkick/customer-records.json'}]);self.assertEqual(r['s3_request_id'],'list-s3-id')
+        r=self.call('search_historical_service_records');self.assertEqual(r['files'],[{'bucket':'lab-private','key':'cloudkick/customer-records.json'}]);self.assertEqual(r['s3_request_id'],'list-s3-id')
     def test_vulnerable_private_read_is_real_tool_output(self):
         action.s3.get_object.return_value={'Body':types.SimpleNamespace(read=lambda *a:b'{"canary":"SYNTHETIC"}'),'ResponseMetadata':{'RequestId':'s3-id'}}
-        r=self.call('preview_diagnostic_file',bucket='lab-private',key='cloudkick/customer-records.json');self.assertIn('SYNTHETIC',r['content']);self.assertEqual(r['s3_request_id'],'s3-id')
+        r=self.call('read_historical_service_record',bucket='lab-private',key='cloudkick/customer-records.json');self.assertIn('SYNTHETIC',r['content']);self.assertEqual(r['s3_request_id'],'s3-id')
     def test_template_modes_and_dependencies(self):
         for engine in ('classic','converse'):
             ts=[]
@@ -122,6 +122,12 @@ class BridgeBoundaries(unittest.TestCase):
     def test_foreign_job_is_not_disclosed(self):
         self.db.get_item.return_value={'Item':{'subject':'C-105','status':'complete','answer':'private'}}
         r=self.call('/jobs/'+'a'*32);self.assertEqual(r['statusCode'],404);self.assertNotIn('private',r['body'])
+    def test_owned_job_returns_structured_ui_actions(self):
+        self.db.get_item.return_value={'Item':{'subject':'C-104','status':'complete','answer':'Review the return.','ui_actions':json.dumps([{'type':'return_approval','id':'a'*24}])}}
+        r=self.call('/jobs/'+'a'*32);self.assertEqual(r['statusCode'],200);self.assertEqual(json.loads(r['body'])['actions'][0]['type'],'return_approval')
+    def test_static_assets_are_public_and_base64_encoded(self):
+        r=bridge.handler({'path':'/assets/cloudrunner-grey.png','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
+        self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/png')
     def test_foreign_approval_is_not_disclosed(self):
         self.db.get_item.return_value={'Item':{'subject':'C-105','approval_id':'a'*24,'status':'pending','item_name':'other customer item'}}
         r=self.call('/approvals/'+'a'*24);self.assertEqual(r['statusCode'],404);self.assertNotIn('other customer item',r['body'])

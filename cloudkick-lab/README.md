@@ -26,7 +26,9 @@ python lab.py deploy --config config.json
 
 On Windows PowerShell, use `.venv\Scripts\Activate.ps1` and `$env:AWS_PROFILE='cloudkick-lab'`, or run the bash commands in WSL. The SDK uses the same profile as the CLI. AWS CLI v2.32.0 or newer can use the IAM console user through `aws login`; see the deployment runbook.
 
-The deployment prints the URL. A private `<name>.state.json` stores customer tokens, the context signing secret, output identifiers and a build manifest. Terraform also stores sensitive Lambda environment values in its local workspace state. Do not commit or share either. Open the URL and enter the C-104 token locally. The browser retains it in memory, not persistent storage.
+The deployment prints two launch links: a C-104 customer journey and a C-105 external-assessment journey. The bearer value is carried in the URL fragment, consumed by the page, stored only for the browser tab and removed from the address bar. It is never sent in the initial HTTP request. Reprint the links with `python lab.py links --config config.json`.
+
+A private `<name>.state.json` stores the underlying customer tokens, context-signing secret, output identifiers and build manifest. Terraform also stores sensitive Lambda environment values in its local workspace state. Do not commit or share either file.
 
 ```bash
 python smoke.py --state cloudkick-lsr.state.json
@@ -74,6 +76,7 @@ Run cleanup for both stacks if you deployed a secure twin. The expiry blocks app
 | `tests/test_boundaries.py` | Offline authorisation and configuration tests |
 | `smoke.py` | Operator component validation against deployed AWS |
 | `docs/IMPLEMENTATION.md` | Full build, rehearsal, investigation and troubleshooting guide |
+| `docs/DEMO_RUNBOOK.md` | Presenter-ready customer, assessor and defender workflows |
 
 The authoritative Phase 1 design is `docs/BASELINE.md`. AWS observations from a
 local deployment should be recorded against the acceptance gates rather than
