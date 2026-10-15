@@ -51,6 +51,16 @@ data "archive_file" "lambda" {
   excludes    = ["__pycache__", "__pycache__/*", "*.pyc"]
 }
 
+# Upload Lambda code through S3 instead of embedding the ZIP in the
+# UpdateFunctionCode request. This avoids an AWS provider serialization failure
+# ("bufio.Scanner: token too long") with binary inline payloads.
+resource "aws_s3_object" "lambda_package" {
+  bucket      = aws_s3_bucket.orders.id
+  key         = "artifacts/cloudkick-lambda.zip"
+  source      = data.archive_file.lambda.output_path
+  source_hash = data.archive_file.lambda.output_base64sha256
+}
+
 resource "aws_dynamodb_table" "state" {
   name         = local.names.state
   billing_mode = "PAY_PER_REQUEST"
@@ -448,7 +458,8 @@ resource "aws_sqs_queue" "worker_failures" {
 resource "aws_lambda_function" "action" {
   depends_on       = [terraform_data.account_guard, aws_cloudwatch_log_group.action]
   function_name    = local.names.action
-  filename         = data.archive_file.lambda.output_path
+  s3_bucket        = aws_s3_object.lambda_package.bucket
+  s3_key           = aws_s3_object.lambda_package.key
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "action.handler"
   role             = aws_iam_role.action.arn
@@ -469,7 +480,8 @@ resource "aws_lambda_function" "action" {
 resource "aws_lambda_function" "worker" {
   depends_on       = [terraform_data.account_guard, aws_cloudwatch_log_group.worker]
   function_name    = local.names.worker
-  filename         = data.archive_file.lambda.output_path
+  s3_bucket        = aws_s3_object.lambda_package.bucket
+  s3_key           = aws_s3_object.lambda_package.key
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "worker.handler"
   role             = aws_iam_role.worker.arn
@@ -489,7 +501,8 @@ resource "aws_lambda_function" "worker" {
 resource "aws_lambda_function" "bridge" {
   depends_on       = [terraform_data.account_guard, aws_cloudwatch_log_group.bridge]
   function_name    = local.names.bridge
-  filename         = data.archive_file.lambda.output_path
+  s3_bucket        = aws_s3_object.lambda_package.bucket
+  s3_key           = aws_s3_object.lambda_package.key
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "bridge.handler"
   role             = aws_iam_role.bridge.arn

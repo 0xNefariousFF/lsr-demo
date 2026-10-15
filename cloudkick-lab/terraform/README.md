@@ -34,6 +34,10 @@ seeds the synthetic policy, orders and one exact private archive. The `plan`
 command creates the private local variables/state needed by Terraform but does
 not apply infrastructure.
 
+The generated Lambda archive is staged under `artifacts/` in the private orders
+bucket and deployed to Lambda by S3 reference. This avoids embedding binary ZIP
+content in the provider's `UpdateFunctionCode` request.
+
 To keep a secure twin ready, use a second configuration with a different `name`
 and `mode: secure`. API Gateway's CloudWatch role setting is regional and
 account-wide; the most recently applied CloudKick stack supplies that role. Keep

@@ -128,10 +128,16 @@ class BridgeBoundaries(unittest.TestCase):
     def test_static_assets_are_public_and_base64_encoded(self):
         r=bridge.handler({'path':'/assets/cloudrunner-grey.webp','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
         self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/webp')
-    def test_shared_lambda_source_stays_small_for_direct_upload(self):
+    def test_shared_lambda_source_stays_lean(self):
         source=Path(__file__).resolve().parents[1]/'src'
         size=sum(path.stat().st_size for path in source.rglob('*') if path.is_file() and '__pycache__' not in path.parts)
         self.assertLess(size,1_000_000,'Optimise UI assets or move them out of the shared Lambda archive')
+    def test_terraform_uses_s3_lambda_code_delivery(self):
+        terraform=(Path(__file__).resolve().parents[1]/'terraform'/'main.tf').read_text()
+        self.assertIn('resource "aws_s3_object" "lambda_package"',terraform)
+        self.assertEqual(terraform.count('s3_bucket        = aws_s3_object.lambda_package.bucket'),3)
+        self.assertEqual(terraform.count('s3_key           = aws_s3_object.lambda_package.key'),3)
+        self.assertNotIn('filename         = data.archive_file.lambda.output_path',terraform)
     def test_foreign_approval_is_not_disclosed(self):
         self.db.get_item.return_value={'Item':{'subject':'C-105','approval_id':'a'*24,'status':'pending','item_name':'other customer item'}}
         r=self.call('/approvals/'+'a'*24);self.assertEqual(r['statusCode'],404);self.assertNotIn('other customer item',r['body'])
