@@ -6,6 +6,11 @@ from boto3.dynamodb.conditions import Key
 
 table=boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
 lam=boto3.client('lambda')
+BUILD_SHA=os.environ.get('BUILD_SHA','unknown')
+
+def log(event,context,**fields):
+    print(json.dumps({'event':event,'build_sha':BUILD_SHA,'lambda_request_id':getattr(context,'aws_request_id','local'),**fields},separators=(',',':')))
+
 def reply(status,obj,html=False):
     return {'statusCode':status,'headers':{'Content-Type':'text/html; charset=utf-8' if html else 'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"},'body':obj if html else json.dumps(obj,default=lambda v:int(v) if isinstance(v,Decimal) else str(v))}
 
@@ -21,7 +26,7 @@ def handler(event,context):
     try:
         body=json.loads(event.get('body') or '{}')
         if not isinstance(body,dict):raise ValueError('invalid_body')
-        if method=='GET' and path=='/me':return reply(200,{'customer':subject,'engine':os.environ['ENGINE'],'mode':os.environ['LAB_MODE']})
+        if method=='GET' and path=='/me':return reply(200,{'customer':subject,'engine':os.environ['ENGINE'],'mode':os.environ['LAB_MODE'],'build_sha':BUILD_SHA})
         if method=='POST' and path=='/chat':
             prompt=body.get('message','');session=body.get('session','')
             if not isinstance(prompt,str) or not 1<=len(prompt)<=2000 or not re.fullmatch(r'[a-zA-Z0-9-]{8,64}',session):raise ValueError('invalid_message_or_session')
@@ -29,6 +34,7 @@ def handler(event,context):
             job=uuid.uuid4().hex
             table.put_item(Item={'pk':'J#'+job,'sk':'STATE','subject':subject,'session':sid,'prompt':prompt,'status':'queued','expiry':int(time.time())+86400})
             lam.invoke(FunctionName=os.environ['WORKER_ARN'],InvocationType='Event',Payload=json.dumps({'job':job}).encode())
+            log('job_queued',context,job=job,subject=subject,session=sid)
             return reply(202,{'job':job})
         if method=='GET' and path.startswith('/jobs/'):
             job=path.rsplit('/',1)[1]
@@ -41,10 +47,17 @@ def handler(event,context):
             item=table.get_item(Key={'pk':'A#'+aid,'sk':'STATE'},ConsistentRead=True).get('Item',{})
             if item.get('subject')!=subject:return reply(404,{'error':'not_found'})
             return reply(200,{k:item[k] for k in ('approval_id','status','order_id','line_id','item_name','amount_gbp','expiry')})
+        if method=='GET' and path.startswith('/reviews/'):
+            rid=path.rsplit('/',1)[1]
+            if not re.fullmatch(r'REV-[A-F0-9]{12}',rid):raise ValueError('invalid_review')
+            item=table.get_item(Key={'pk':'R#'+rid,'sk':'STATE'},ConsistentRead=True).get('Item',{})
+            if item.get('subject')!=subject:return reply(404,{'error':'not_found'})
+            return reply(200,{k:item[k] for k in ('review_id','status','order_id','line_id','item_name','reason','expiry')})
         if method=='POST' and path=='/approve':
             aid=body.get('approval_id','')
             if not re.fullmatch(r'[a-f0-9]{24}',aid):raise ValueError('invalid_approval')
             table.update_item(Key={'pk':'A#'+aid,'sk':'STATE'},UpdateExpression='SET #s=:yes',ConditionExpression='subject=:subject AND #s=:pending AND expiry>:now',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':subject':subject,':pending':'pending',':yes':'approved',':now':int(time.time())})
+            log('return_approved',context,approval_id=aid,subject=subject)
             return reply(200,{'status':'approved'})
         return reply(404,{'error':'not_found'})
     except (ValueError,TypeError):return reply(400,{'error':'invalid_request'})

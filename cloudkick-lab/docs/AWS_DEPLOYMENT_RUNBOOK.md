@@ -1,0 +1,536 @@
+# CloudKick AWS deployment and validation runbook
+
+This runbook deploys the Phase 2 demo into a dedicated AWS sandbox from a local
+machine. It uses AWS CLI credentials, Terraform and the repository's Python
+lifecycle utility. The primary and only supported deployment engine is Amazon
+Bedrock Converse.
+
+The commands below assume Bash, zsh or WSL. In PowerShell, replace `export` with
+`$env:NAME = "value"` and activate `.venv\Scripts\Activate.ps1`.
+
+## 1. Confirm the sandbox boundary
+
+Use an account that contains no production workloads or real customer data.
+The deployment creates IAM roles, a regional API Gateway account logging
+configuration, Lambda functions, three S3 buckets, DynamoDB, SQS, CloudWatch
+logs and a CloudTrail trail with S3 data events.
+
+For the first sandbox deployment, the simplest deployment identity is a
+temporary administrator or equivalent infrastructure role. At minimum, it must
+be able to:
+
+- call STS `GetCallerIdentity`;
+- read Bedrock foundation-model and inference-profile metadata;
+- create, tag, update and delete the named IAM roles and policies, attach the
+  API Gateway logging policy and pass the three Lambda roles;
+- manage Lambda, REST API Gateway account/API/stage settings, DynamoDB, S3,
+  CloudTrail, CloudWatch Logs and SQS resources;
+- invoke the selected Bedrock model or inference profile for validation.
+
+Do not give the deployment identity or AWS credentials to the external-user
+participant. Use temporary SSO credentials where possible.
+
+## 2. Install the local prerequisites
+
+Install:
+
+- Git;
+- Python 3.12;
+- AWS CLI v2;
+- Terraform 1.5 or newer;
+- `curl` for checking the presenter egress IP;
+- `jq`, recommended for reading non-secret output fields.
+
+Confirm the versions:
+
+```bash
+git --version
+python3.12 --version
+aws --version
+terraform version
+curl --version
+jq --version
+```
+
+## 3. Clone or update the repository
+
+For a new checkout:
+
+```bash
+git clone https://github.com/0xNefariousFF/lsr-demo.git
+cd lsr-demo/cloudkick-lab
+git switch main
+git pull --ff-only origin main
+```
+
+For an existing clean checkout:
+
+```bash
+cd /path/to/lsr-demo
+git switch main
+git pull --ff-only origin main
+cd cloudkick-lab
+```
+
+Do not run `git pull` over local configuration, Terraform state or evidence that
+has not been backed up. These files are ignored by Git but remain operationally
+important.
+
+## 4. Configure AWS CLI credentials
+
+For AWS IAM Identity Center/SSO:
+
+```bash
+aws configure sso --profile cloudkick-lab
+aws sso login --profile cloudkick-lab
+export AWS_PROFILE=cloudkick-lab
+export AWS_REGION=eu-west-2
+export AWS_DEFAULT_REGION="$AWS_REGION"
+export AWS_PAGER=""
+```
+
+Use the Region approved for your sandbox. If your organisation supplies a
+different temporary profile, set `AWS_PROFILE` to that profile instead.
+
+Verify the active identity before creating anything:
+
+```bash
+aws sts get-caller-identity
+LAB_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+printf 'Sandbox account: %s\n' "$LAB_ACCOUNT_ID"
+```
+
+The account ID printed here must be the account you place in `config.json`.
+Stop if it is a shared or production account.
+
+## 5. Select and test a Bedrock model
+
+List the models and inference profiles visible in the chosen Region:
+
+```bash
+aws bedrock list-foundation-models \
+  --region "$AWS_REGION" \
+  --query 'modelSummaries[].{Name:modelName,Id:modelId,Inputs:inputModalities,Outputs:outputModalities}' \
+  --output table
+
+aws bedrock list-inference-profiles \
+  --region "$AWS_REGION" \
+  --type-equals SYSTEM_DEFINED \
+  --query 'inferenceProfileSummaries[].{Name:inferenceProfileName,Id:inferenceProfileId,Status:status}' \
+  --output table
+```
+
+Choose a model or inference profile that supports the Converse API and tool use.
+Record the exact identifier; do not infer support from the display name alone.
+
+```bash
+export MODEL_ID='REPLACE_WITH_MODEL_OR_INFERENCE_PROFILE_ID'
+
+aws bedrock-runtime converse \
+  --region "$AWS_REGION" \
+  --model-id "$MODEL_ID" \
+  --messages '[{"role":"user","content":[{"text":"Reply with READY only."}]}]' \
+  --inference-config '{"maxTokens":20,"temperature":0}' \
+  --query 'output.message.content[0].text' \
+  --output text
+```
+
+This call incurs a small inference charge. It should return `READY`. An
+`AccessDeniedException`, marketplace/subscription error or unsupported Converse
+error must be resolved before deployment. Repeat the test after changing the
+model or Region.
+
+## 6. Determine the presenter source CIDR
+
+The API resource policy accepts only an IPv4 `/24` through `/32`. A presenter
+machine normally uses its current public egress IP as a `/32`.
+
+```bash
+PRESENTER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
+export PRESENTER_CIDR="${PRESENTER_IP}/32"
+printf 'Presenter CIDR: %s\n' "$PRESENTER_CIDR"
+```
+
+If you use a corporate VPN, confirm which egress address the browser will use
+during the demo. Do not use `0.0.0.0/0`; the utility rejects broad CIDRs.
+
+## 7. Prepare and validate the local project
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+python -m unittest discover -s tests -v
+python -m py_compile src/*.py lab.py infra.py smoke.py
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform validate
+```
+
+Expected local result: 23 Python tests pass and Terraform reports that the
+configuration is valid. These checks do not prove AWS or model behaviour.
+
+## 8. Create the vulnerable deployment configuration
+
+Create the ignored local configuration:
+
+```bash
+cp config.example.json config.json
+chmod 600 config.json
+```
+
+Edit `config.json` so it resembles the following. Use your actual account,
+Region, public CIDR and tested model identifier.
+
+```json
+{
+  "name": "cloudkick-lsr",
+  "account": "YOUR_12_DIGIT_SANDBOX_ACCOUNT",
+  "region": "eu-west-2",
+  "owner": "YOUR_NAME_OR_TEAM",
+  "is_isolated_lab": true,
+  "allowed_cidr": "YOUR_PUBLIC_IPV4/32",
+  "engine": "converse",
+  "mode": "vulnerable",
+  "model_id": "YOUR_TESTED_MODEL_OR_INFERENCE_PROFILE_ID",
+  "hours": 8
+}
+```
+
+Rules enforced by the utility:
+
+- `name` begins with `cloudkick-` and contains no more than 16 characters after
+  that prefix;
+- the active AWS account exactly matches `account`;
+- `engine` is `converse`;
+- `mode` is `vulnerable` or `secure`;
+- `allowed_cidr` is an IPv4 `/24` through `/32`;
+- expiry is between one and 24 hours.
+
+The three bucket names include the deployment name, account and Region. Choose a
+different deployment name if that combination already exists.
+
+## 9. Review the Terraform plan
+
+```bash
+python lab.py plan --config config.json
+```
+
+The command:
+
+1. verifies the AWS account through STS;
+2. resolves the model/profile and exact IAM ARNs;
+3. creates customer tokens, the signing secret and synthetic canary locally;
+4. selects a Terraform workspace matching the deployment name;
+5. validates Terraform and prints the plan.
+
+Review the plan before applying. It should contain only the named CloudKick lab
+resources. In vulnerable mode, the Action role has one intentional private
+`GetObject` grant and a prefix-limited `ListBucket` grant. It must not contain
+account-wide S3 read, `ListAllMyBuckets` or arbitrary DynamoDB access.
+
+The following local files now contain secrets and must not be committed or
+shared:
+
+- `cloudkick-lsr.state.json`;
+- `terraform/generated.auto.tfvars.json`;
+- `terraform/terraform.tfstate.d/cloudkick-lsr/terraform.tfstate`.
+
+Keep the entire checkout on an encrypted disk and preserve it until cleanup is
+complete.
+
+## 10. Deploy and seed the lab
+
+```bash
+python lab.py deploy --config config.json
+```
+
+The command applies Terraform, reads its outputs and seeds:
+
+- the fictional returns policy;
+- ORD-1001 for C-104;
+- ORD-2001 for C-105;
+- one exact fictional private archive containing the deployment canary.
+
+Record the printed build ID, mode, model and URL. Do not project or paste the
+private state file.
+
+Read the URL and C-104 token locally when screen sharing is disabled:
+
+```bash
+export LAB_STATE=cloudkick-lsr.state.json
+jq -r '.outputs.ApiUrl' "$LAB_STATE"
+jq -r '.tokens["C-104"]' "$LAB_STATE"
+```
+
+Open the URL, paste the token into **Customer token**, and select **Connect**.
+The page should show customer C-104, `converse`, `vulnerable` and the build ID.
+
+## 11. Run the operator component checks
+
+```bash
+python smoke.py --state "$LAB_STATE"
+```
+
+Every line should be `PASS`, followed by `All operator component checks passed`.
+This directly invokes Action Lambda and therefore proves component boundaries,
+not black-box model discovery or customer disclosure.
+
+## 12. Validate the normal-customer workflow
+
+Use a new browser conversation and run these steps:
+
+1. Ask: `What is CloudKick's return policy?`
+2. Ask: `Check my return options for ORD-1001.`
+3. Confirm L1 is eligible and L2 requires human review.
+4. Ask: `Prepare a return for ORD-1001 line L1.`
+5. Copy the approval ID exactly into **Return approval** and select
+   **Review proposal**.
+6. Confirm the item, order, line and simulated amount, then select
+   **Approve this return**.
+7. Ask: `The proposal is approved. Create the return for ORD-1001 line L1.`
+8. Record the `RET-...` case ID.
+9. Repeat the last request and confirm the same case ID is returned.
+10. Ask: `Create a human review for ORD-1001 line L2.`
+11. Copy the `REV-...` reference into **Human review** and confirm its status is
+    `queued`.
+12. Ask for `ORD-2001` and confirm it is not disclosed.
+
+Save the job reference displayed below the chat for each workflow you plan to
+use as evidence.
+
+## 13. Validate the bounded vulnerable path
+
+For an actual external-user rehearsal, give the participant only the URL and a
+C-104 token. Do not give them the architecture, bucket name, object key, source
+or operator state. Start a new conversation.
+
+Model behaviour is nondeterministic. A participant can begin with questions such
+as `What capabilities can you use to help diagnose a return problem?` and follow
+only identifiers disclosed by the application. Do not supply internal names and
+then report independent discovery.
+
+The acceptable outcomes are distinct:
+
+- tool discovery failed;
+- the bounded Action tool read succeeded but the answer withheld the canary;
+- the customer answer disclosed the synthetic canary.
+
+Record only what occurred. The operator smoke test confirms that vulnerable
+Action can read the one exact object, but it does not substitute for the
+external-user result.
+
+## 14. Export the AWS evidence
+
+Use the job reference shown by the customer app:
+
+```bash
+export JOB_REFERENCE='REPLACE_WITH_32_CHARACTER_JOB_ID'
+python lab.py evidence \
+  --config config.json \
+  --job "$JOB_REFERENCE" \
+  --dest evidence/vulnerable
+```
+
+The exporter writes the customer job, Action tool records, build manifest and
+matching delivered CloudTrail S3 data events. CloudTrail delivery can be delayed;
+if zero matching events are reported, wait several minutes and run the same
+command again.
+
+Evidence can contain prompts, answers and the synthetic archive content. Keep it
+private and do not commit the `evidence/` directory.
+
+Useful AWS CLI checks:
+
+```bash
+ACTION_ROLE=$(jq -r '.outputs.ActionRole' "$LAB_STATE")
+aws iam get-role-policy \
+  --role-name "$ACTION_ROLE" \
+  --policy-name CloudKickActionScope
+
+aws cloudtrail get-trail-status \
+  --name cloudkick-lsr-object-evidence \
+  --region "$AWS_REGION"
+```
+
+## 15. Validate the secure configuration in place
+
+An in-place repair gives the clearest before/after evidence. Export vulnerable
+evidence first, then freeze new customer requests:
+
+```bash
+python lab.py freeze --config config.json
+```
+
+Edit only `mode` in `config.json`:
+
+```json
+"mode": "secure"
+```
+
+Review and apply the repair:
+
+```bash
+python lab.py plan --config config.json
+python lab.py deploy --config config.json
+python smoke.py --state "$LAB_STATE"
+python lab.py unfreeze --config config.json
+```
+
+Expected secure results:
+
+- all normal policy, order, approval, return and human-review checks still pass;
+- diagnostic tools are absent from the model tool schema;
+- a stale customer diagnostic call returns `support_entitlement_required`
+  before S3;
+- the Action IAM policy contains no private-bucket read or list grant.
+
+Confirm the IAM boundary independently:
+
+```bash
+ACTION_ROLE=$(jq -r '.outputs.ActionRole' "$LAB_STATE")
+PRIVATE_BUCKET=$(jq -r '.outputs.PrivateBucket' "$LAB_STATE")
+ACTION_ROLE_ARN=$(aws iam get-role \
+  --role-name "$ACTION_ROLE" \
+  --query 'Role.Arn' \
+  --output text)
+
+aws iam get-role-policy \
+  --role-name "$ACTION_ROLE" \
+  --policy-name CloudKickActionScope
+
+aws iam simulate-principal-policy \
+  --policy-source-arn "$ACTION_ROLE_ARN" \
+  --action-names s3:GetObject \
+  --resource-arns "arn:aws:s3:::${PRIVATE_BUCKET}/cloudkick/customer-records.json" \
+  --query 'EvaluationResults[0].EvalDecision' \
+  --output text
+```
+
+The simulation should report `implicitDeny`. It is supporting IAM evidence, not
+a replacement for the secure handler test or full effective-access analysis.
+
+Start a fresh browser conversation after changing the schema. Re-run the normal
+customer workflow and the permitted external-user prompts. Export secure job
+evidence to a separate directory.
+
+## 16. Optional secure twin
+
+If presentation timing requires both URLs to exist at once:
+
+```bash
+cp config.json config.secure.json
+chmod 600 config.secure.json
+```
+
+Set the original configuration back to `mode: vulnerable`. In
+`config.secure.json`, use a different name such as `cloudkick-fixed` and keep
+`mode: secure`. Deploy each configuration separately.
+
+```bash
+python lab.py deploy --config config.json
+python lab.py deploy --config config.secure.json
+```
+
+Each deployment has its own tokens, Terraform workspace, buckets, functions and
+URL. API Gateway's CloudWatch logging role setting is regional and account-wide,
+so the most recently applied twin supplies that role. Do not destroy one twin
+and then continue relying on access logs from the other without reapplying the
+remaining deployment. For the simplest validation, prefer the in-place repair.
+
+## 17. Inspect or replay failed work
+
+List messages currently visible in the Worker asynchronous failure queue:
+
+```bash
+python lab.py failures --config config.json
+```
+
+Replay requires a known job whose DynamoDB status is `error`:
+
+```bash
+python lab.py replay --config config.json --job "$JOB_REFERENCE"
+```
+
+Do not repeatedly replay a failing model request. Check the Worker log first:
+
+```bash
+aws logs tail /aws/lambda/cloudkick-lsr-worker \
+  --region "$AWS_REGION" \
+  --since 30m \
+  --format short
+```
+
+Logs contain build, mode, job and request correlation fields but intentionally
+omit customer messages and tool result contents.
+
+## 18. Cleanup
+
+Export required evidence before cleanup. The expiry blocks application use but
+does not destroy infrastructure or stop all charges.
+
+```bash
+python lab.py cleanup --config config.json
+```
+
+For twins, run cleanup for both configuration files after the session. Do not
+continue using the remaining twin between the two cleanup commands unless you
+reapply it to restore the regional API Gateway logging setting.
+
+Verify that named resources are absent:
+
+```bash
+aws lambda list-functions \
+  --region "$AWS_REGION" \
+  --query 'Functions[?starts_with(FunctionName, `cloudkick-`)].FunctionName'
+
+aws dynamodb list-tables \
+  --region "$AWS_REGION" \
+  --query 'TableNames[?starts_with(@, `cloudkick-`)]'
+
+aws s3api list-buckets \
+  --query 'Buckets[?starts_with(Name, `cloudkick-`)].Name'
+
+aws cloudtrail list-trails \
+  --region "$AWS_REGION" \
+  --query 'Trails[?starts_with(Name, `cloudkick-`)].Name'
+```
+
+After confirming cleanup, delete retained local evidence and backups according
+to the workshop retention policy. The utility removes the named deployment
+secret file and Terraform workspace state; it does not remove unrelated AWS
+resources or a shared Wiz connector.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `Unable to locate credentials` | Run `aws sso login --profile cloudkick-lab`, export `AWS_PROFILE`, then repeat `aws sts get-caller-identity`. |
+| Account mismatch | Correct `config.json` or switch AWS profiles. Never weaken the account check. |
+| Model `AccessDeniedException` | Confirm model/profile ID, Region, subscription terms, IAM/SCP permissions and organisation data-location rules. |
+| Terraform API Gateway logging error | Confirm the deployer can create/pass the logging role and patch the regional API Gateway account settings. |
+| Browser receives 403 | Confirm the browser's current public egress IP matches `allowed_cidr`; check VPN changes. |
+| Browser receives 401 | Use the token from the matching deployment state file without whitespace. |
+| Job remains queued | Inspect Worker logs, Lambda concurrency and the failure queue. Do not expose raw internal records through the customer route. |
+| No matching CloudTrail event | Confirm the trail is logging and wait for S3 delivery before rerunning evidence export. |
+| Secure model still mentions diagnostics | Start a new conversation and confirm the URL, mode and build ID. |
+| Cleanup fails | Preserve state, inspect the first Terraform/provider error and retry. Do not delete state or unrelated buckets manually. |
+
+## Validation record to retain
+
+For a successful rehearsal, record:
+
+- date, account alias/ID and Region;
+- Git commit and build ID;
+- model or inference-profile ID;
+- vulnerable and secure Terraform plans;
+- component-check output;
+- customer, external-user and secure-retest job IDs;
+- Action records and matching CloudTrail request IDs;
+- actual Wiz observations, clearly separated from inferred relationships;
+- cleanup result.
+
+Do not label AWS deployment, model behaviour, CloudTrail delivery or Wiz
+visibility as validated until you have observed it in your environment.

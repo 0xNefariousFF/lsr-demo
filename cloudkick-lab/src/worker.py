@@ -6,6 +6,10 @@ from schema import INSTRUCTIONS,converse_tools
 
 table=boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
 cfg=Config(read_timeout=180,connect_timeout=10,retries={'max_attempts':1})
+BUILD_SHA=os.environ.get('BUILD_SHA','unknown')
+
+def log(event,context,**fields):
+    print(json.dumps({'event':event,'build_sha':BUILD_SHA,'engine':os.environ['ENGINE'],'mode':os.environ['LAB_MODE'],'lambda_request_id':getattr(context,'aws_request_id','local'),**fields},separators=(',',':')))
 
 def converse(prompt,attrs,session,previous):
     client=boto3.client('bedrock-runtime',config=cfg)
@@ -29,7 +33,7 @@ def converse(prompt,attrs,session,previous):
         messages.append({'role':'user','content':results})
     raise RuntimeError('tool_turn_limit')
 
-def classic(prompt,attrs,session):
+def classic(prompt,attrs,session,context=None):
     client=boto3.client('bedrock-agent-runtime',config=cfg)
     r=client.invoke_agent(agentId=os.environ['AGENT_ID'],agentAliasId=os.environ['ALIAS_ID'],sessionId=session,inputText=prompt,enableTrace=True,sessionState={'sessionAttributes':attrs})
     text=[]; traces=0
@@ -37,7 +41,7 @@ def classic(prompt,attrs,session):
         if 'chunk' in e:text.append(e['chunk']['bytes'].decode())
         elif 'trace' in e:traces+=1
         elif any(k.endswith('Exception') for k in e):raise RuntimeError(str(list(e)))
-    print(json.dumps({'event':'agent_completed','session':session,'trace_events':traces}))
+    log('agent_completed',context,session=session,trace_events=traces)
     return ''.join(text),[]
 
 def handler(event,context):
@@ -47,23 +51,26 @@ def handler(event,context):
         r=table.update_item(Key=key,UpdateExpression='SET #s=:running',ConditionExpression='#s=:queued',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':running':'running',':queued':'queued'},ReturnValues='ALL_NEW')['Attributes']
     except table.meta.client.exceptions.ConditionalCheckFailedException:
         return
+    log('job_started',context,job=event['job'],subject=r['subject'],session=r['session'])
     skey={'pk':'S#'+r['session'],'sk':'STATE'}
     locked=False
     try:
         session=table.update_item(Key=skey,UpdateExpression='SET lock_until=:until, expiry=:expiry',ConditionExpression='attribute_not_exists(lock_until) OR lock_until<:now',ExpressionAttributeValues={':until':int(time.time())+240,':now':int(time.time()),':expiry':int(time.time())+86400},ReturnValues='ALL_NEW')['Attributes'];locked=True
         previous=json.loads(session.get('history','[]'))
         if len(previous)>30:raise ValueError('conversation_limit_start_new_session')
-        attrs=sign_context(r['subject'],event['job'],r['session'])
+        attrs=sign_context(r['subject'],event['job'],r['session'],actor_type='customer')
         if os.environ['ENGINE']=='classic':
-            answer,history=classic(r['prompt'],attrs,r['session'])
+            answer,history=classic(r['prompt'],attrs,r['session'],context)
         else:
             answer,history=converse(r['prompt'],attrs,r['session'],previous)
         hist=json.dumps(history)
         if len(hist.encode())>180000:raise ValueError('conversation_limit_start_new_session')
         table.update_item(Key=skey,UpdateExpression='SET history=:h',ExpressionAttributeValues={':h':hist})
         table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':answer[:24000]})
+        log('job_completed',context,job=event['job'],subject=r['subject'],answer_chars=len(answer))
     except Exception as ex:
-        print(json.dumps({'event':'job_failed','job':event['job'],'error_type':type(ex).__name__,'detail':str(ex)[:300]}))
+        error_code=getattr(ex,'response',{}).get('Error',{}).get('Code')
+        log('job_failed',context,job=event['job'],error_type=type(ex).__name__,error_code=error_code)
         table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'error',':a':'Request failed: '+type(ex).__name__+'. Check worker logs and start a new session if needed.'})
     finally:
         if locked:table.update_item(Key=skey,UpdateExpression='SET lock_until=:zero',ExpressionAttributeValues={':zero':0})

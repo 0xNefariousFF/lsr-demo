@@ -4,8 +4,10 @@ This package implements a fictional customer-return agent and a deliberately bou
 
 ## Start here
 
-1. Read `docs/IMPLEMENTATION.md`. Select an isolated AWS account and supported model.
-2. Use `engine=classic` only if the account is eligible for Amazon Bedrock Agents Classic. AWS closed it to new customers on 30 July 2026. `engine=converse` is a custom Bedrock Converse adapter, not Agents Classic or AgentCore.
+1. Read `docs/IMPLEMENTATION.md`. Select an isolated AWS account and supported model. Install Terraform 1.5 or newer and Python 3.12.
+   Follow `docs/AWS_DEPLOYMENT_RUNBOOK.md` for the complete AWS CLI, deployment,
+   validation and teardown sequence.
+2. Use `engine=converse`. This is the authoritative demo path and implements a custom agent using the Amazon Bedrock Converse API. It is not Agents Classic or AgentCore. The Classic adapter is retained temporarily for compatibility testing only.
 3. Copy `config.example.json` to `config.json` and replace all values marked `REPLACE`. A narrow presenter source IP range is mandatory.
 4. Install local dependencies and run the offline tests.
 
@@ -14,14 +16,17 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
 export AWS_PROFILE=cloudkick-lab
 aws sts get-caller-identity
+python lab.py plan --config config.json
 python lab.py deploy --config config.json
 ```
 
 On Windows PowerShell, use `.venv\Scripts\Activate.ps1` and `$env:AWS_PROFILE='cloudkick-lab'`, or run the bash commands in WSL. The SDK uses the same profile as the CLI. Use temporary SSO credentials.
 
-The deployment prints the URL. A private `<name>.state.json` stores customer tokens, the context signing secret, output identifiers, code hash and model information. Do not commit or share it. Open the URL and enter the C-104 token locally. The browser retains it in memory, not persistent storage.
+The deployment prints the URL. A private `<name>.state.json` stores customer tokens, the context signing secret, output identifiers and a build manifest. Terraform also stores sensitive Lambda environment values in its local workspace state. Do not commit or share either. Open the URL and enter the C-104 token locally. The browser retains it in memory, not persistent storage.
 
 ```bash
 python smoke.py --state cloudkick-lsr.state.json
@@ -29,11 +34,11 @@ python lab.py evidence --config config.json --job JOB_REFERENCE
 python lab.py freeze --config config.json
 ```
 
-`smoke.py` is an operator component check. It does not demonstrate the external-user path or model behaviour. The customer application must be rehearsed separately. Offline tests use fake AWS clients. No successful AWS deployment or Wiz tenant investigation is claimed by the supplied package.
+`smoke.py` is an operator component check with explicit pass/fail exits. It does not demonstrate the external-user path or model behaviour. The customer application must be rehearsed separately. Offline tests use fake AWS clients. No successful AWS deployment or Wiz tenant investigation is claimed by the supplied package.
 
 ## Repair
 
-Preserve evidence, freeze the bridge, set `mode` to `secure` in the configuration and redeploy. The update removes diagnostic tools, rejects stale diagnostic calls and removes the private S3 grants. Start a new conversation after the update. A fresh Classic alias/version is created for a changed build.
+Preserve evidence, freeze the bridge, set `mode` to `secure` in the configuration and redeploy. The update removes diagnostic tools, rejects stale diagnostic calls and removes the private S3 grants. Start a new conversation after the update.
 
 ```bash
 python lab.py deploy --config config.json
@@ -45,7 +50,7 @@ For a time-limited presentation, predeploy a second stack named `cloudkick-fixed
 
 ## Remove the lab
 
-Export any evidence first. The cleanup operation deletes this named stack and empties its four explicitly named, CloudKick-tagged buckets. It does not enumerate arbitrary account buckets.
+Export any evidence first. The cleanup operation runs Terraform destroy in the named workspace, including the three explicitly named lab buckets. It does not enumerate arbitrary account buckets.
 
 ```bash
 python lab.py cleanup --config config.json
@@ -57,9 +62,10 @@ Run cleanup for both stacks if you deployed a secure twin. The expiry blocks app
 
 | File | Purpose |
 |---|---|
-| `infra.py` | CloudFormation template generator with explicit runtime IAM scope |
-| `lab.py` | Account check, packaging, deployment, fixtures, evidence export, freeze and cleanup |
-| `src/bridge.py` | Customer auth, asynchronous job API and independent approval endpoint |
+| `terraform/` | Authoritative AWS infrastructure, IAM boundaries, logs and outputs |
+| `infra.py` | Legacy CloudFormation generator retained for compatibility tests only |
+| `lab.py` | Terraform lifecycle, account/model checks, fixtures, evidence, reset, replay and cleanup |
+| `src/bridge.py` | Customer auth, asynchronous job API, approval and human-review endpoints |
 | `src/worker.py` | Bedrock Classic invocation or bounded Converse tool loop |
 | `src/action.py` | Business rules and deliberate diagnostic defect |
 | `src/common.py` | Signed customer context and deterministic return identifiers |
@@ -68,5 +74,9 @@ Run cleanup for both stacks if you deployed a secure twin. The expiry blocks app
 | `tests/test_boundaries.py` | Offline authorisation and configuration tests |
 | `smoke.py` | Operator component validation against deployed AWS |
 | `docs/IMPLEMENTATION.md` | Full build, rehearsal, investigation and troubleshooting guide |
+
+The authoritative Phase 1 design is `docs/BASELINE.md`. AWS observations from a
+local deployment should be recorded against the acceptance gates rather than
+assumed from the implementation.
 
 The code is authored for this workshop. CloudGoat informed the design comparison; its scenario code is not copied into this package.

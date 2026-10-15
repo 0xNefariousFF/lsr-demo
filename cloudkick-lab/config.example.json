@@ -5,7 +5,7 @@
   "owner": "Miguel Lopez",
   "is_isolated_lab": true,
   "allowed_cidr": "REPLACE_WITH_PRESENTER_PUBLIC_IPV4/32",
-  "engine": "classic",
+  "engine": "converse",
   "mode": "vulnerable",
   "model_id": "REPLACE_WITH_SUPPORTED_MODEL_OR_INFERENCE_PROFILE",
   "hours": 8

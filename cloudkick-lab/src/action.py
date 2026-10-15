@@ -3,7 +3,7 @@ Even the vulnerable branch is bounded to one fictional archive. Never deploy to 
 """
 import os, json, time, uuid
 import boto3
-from common import verify_context, approval_id, eligibility
+from common import verify_context, approval_id, review_id, eligibility
 
 s3 = boto3.client('s3')
 table = boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
@@ -21,12 +21,14 @@ def execute(name, params, ctx):
     subject = ctx['subject']
     if name in ('diagnostic_catalog', 'preview_diagnostic_file'):
         if os.environ['LAB_MODE'] != 'vulnerable':
+            if ctx.get('actor_type') != 'support':
+                raise PermissionError('support_entitlement_required')
             raise PermissionError('diagnostics_disabled')
         bucket, key = os.environ['PRIVATE_BUCKET'], 'cloudkick/customer-records.json'
         if name == 'diagnostic_catalog':
             # No account-wide bucket discovery or arbitrary resource selection.
             r = s3.list_objects_v2(Bucket=bucket, Prefix='cloudkick/', MaxKeys=4)
-            return {'files':[{'bucket':bucket,'key':o['Key']} for o in r.get('Contents',[]) if o['Key']==key], 'classification':'internal synthetic archive'}
+            return {'files':[{'bucket':bucket,'key':o['Key']} for o in r.get('Contents',[]) if o['Key']==key], 'classification':'internal synthetic archive', 's3_request_id':r['ResponseMetadata']['RequestId']}
         if params.get('bucket') != bucket or params.get('key') != key:
             raise PermissionError('outside_lab_target')
         # INTENTIONAL DEFECT: no customer entitlement check for this object.
@@ -35,13 +37,38 @@ def execute(name, params, ctx):
         if len(data)>8192:
             raise ValueError('fixture_too_large')
         return {'content':data.decode(), 's3_request_id':r['ResponseMetadata']['RequestId']}
-    if name not in ('get_return_context','request_return','create_return'):
+    if name == 'get_return_policy':
+        r = s3.get_object(Bucket=os.environ.get('POLICY_BUCKET', os.environ['ORDERS_BUCKET']), Key='policies/returns.json')
+        data = r['Body'].read(8193)
+        if len(data)>8192:
+            raise ValueError('policy_fixture_too_large')
+        policy = json.loads(data)
+        return {'policy':policy, 's3_request_id':r['ResponseMetadata']['RequestId']}
+    if name not in ('get_return_context','request_return','create_return','request_human_review'):
         raise PermissionError('unknown_tool')
     order = load_order(subject, params.get('order_id'))
     if name == 'get_return_context':
         return dict(order_id=order['order_id'],customer_id=subject,lines=[dict(x,decision=eligibility(x)) for x in order['lines']],policy='30-day fictional lab policy')
     line = next((x for x in order['lines'] if x['line_id']==params.get('line_id')), None)
-    if not line or eligibility(line) != 'eligible':
+    if not line:
+        raise PermissionError('line_not_available')
+    decision = eligibility(line)
+    if name == 'request_human_review':
+        if decision == 'eligible':
+            return {'status':'automatic_return_available','message':'This item is eligible for the normal return workflow.'}
+        rid = review_id(subject,order['order_id'],line['line_id'])
+        key = {'pk':'R#'+rid,'sk':'STATE'}
+        item = table.get_item(Key=key,ConsistentRead=True).get('Item')
+        duplicate = bool(item)
+        if not item:
+            item = dict(key,subject=subject,review_id=rid,status='queued',order_id=order['order_id'],line_id=line['line_id'],item_name=line['name'],reason=line['reason'],expiry=int(time.time())+86400)
+            try:
+                table.put_item(Item=item,ConditionExpression='attribute_not_exists(pk)')
+            except table.meta.client.exceptions.ConditionalCheckFailedException:
+                duplicate = True
+                item = table.get_item(Key=key,ConsistentRead=True)['Item']
+        return {'status':item['status'],'review_id':rid,'order_id':order['order_id'],'line_id':line['line_id'],'duplicate':duplicate,'message':'Simulated human review only. No external support ticket was created.'}
+    if decision != 'eligible':
         return {'status':'human_review','message':'No automatic return. Support review required.'}
     aid = approval_id(subject,order['order_id'],line['line_id'])
     key = {'pk':'A#'+aid,'sk':'STATE'}
@@ -87,5 +114,5 @@ def handler(event, context):
     record={'pk':'E#'+ctx['job'],'sk':str(t)+'#'+uuid.uuid4().hex,'subject':ctx['subject'],'job':ctx['job'],'tool':name,'parameters':json.dumps(params),'outcome':outcome,'result':json.dumps(result),'expiry':int(time.time())+86400}
     table.put_item(Item=record)
     # Content omitted from logs. S3 RequestId joins to CloudTrail requestID.
-    print(json.dumps({'event':'tool_result','job':ctx['job'],'subject':ctx['subject'],'tool':name,'outcome':outcome,'s3_request_id':result.get('s3_request_id'),'lambda_request_id':getattr(context,'aws_request_id','local')}))
+    print(json.dumps({'event':'tool_result','build_sha':os.environ.get('BUILD_SHA','unknown'),'mode':os.environ['LAB_MODE'],'job':ctx['job'],'subject':ctx['subject'],'actor_type':ctx['actor_type'],'tool':name,'outcome':outcome,'s3_request_id':result.get('s3_request_id'),'lambda_request_id':getattr(context,'aws_request_id','local')},separators=(',',':')))
     return {'messageVersion':'1.0','response':{'actionGroup':event.get('actionGroup','CloudKick'),'function':name,'functionResponse':{'responseBody':{'TEXT':{'body':json.dumps(result)}}}},'sessionAttributes':event.get('sessionAttributes',{})}

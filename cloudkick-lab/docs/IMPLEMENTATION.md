@@ -2,17 +2,22 @@ How AI Agent Attack Paths Are Defended with Wiz
 
 Learn & Share Remix  |  Miguel Lopez  |  11 October 2026
 
+> Status: Phase 2 implementation guide. `BASELINE.md` remains the authoritative
+> scenario and architecture design. AWS and Wiz observations must still be
+> added from an authorised live rehearsal; final diagrams and presentation
+> assets belong to later phases.
+
 ## Executive summary
 
 Use a tailored CloudKick lab for the 60-minute session. It gives an ordinary customer useful return capabilities, then shows how a legacy diagnostic function can use its workload identity beyond that customer’s entitlement. The S3 archive stays private throughout. Its records and every return transaction are fictional.
 
-The package includes an editable 34-slide deck with 27 timed main slides and seven hidden reference slides, plus runnable infrastructure generation, a customer web application, two orchestration modes, synthetic fixtures, evidence export and a secure configuration. The three main live demonstrations total 22 minutes, each followed by a recap. A two-minute repair replay completes the story.
+The current repository includes a Terraform deployment, a customer web application, bounded Converse orchestration, synthetic fixtures, evidence export and a secure configuration. The Classic adapter remains compatibility code only. The editable presentation, final diagrams and validated evidence package are later-phase deliverables and are not yet included.
 
 Amazon Bedrock Agents Classic closed to new customers on 30 July 2026. An eligible account can use the requested managed-agent implementation. The included alternative is a custom agent using the Bedrock Converse API. AWS recommends AgentCore as the migration destination, but this package does not claim to implement AgentCore. [R1, R2]
 
 ## Readiness boundary
 
-Twelve offline tests pass for the supplied application boundaries and configuration graph. AWS provisioning, model behaviour, service quotas, Wiz inventory, product entitlements and live detections require rehearsal in the target environments. No AWS or Wiz results are represented as observed in this package.
+Twenty-three offline tests pass for the supplied application boundaries, including cross-customer job, approval and review access. Terraform formatting and validation also pass locally. AWS provisioning, model behaviour, service quotas, Wiz inventory, product entitlements and live detections require rehearsal in the target environments. No AWS or Wiz results are represented as observed in this package.
 
 ## How to use this guide
 
@@ -104,17 +109,18 @@ Rhino Security Labs’ bedrock_agent_hijacking scenario begins as IAM user Grace
 | Initial access | AWS credentials | Customer token only |
 | Primary weakness | Lambda code modification | Missing tool entitlement check |
 | Business workflow | Resource inventory | Owned return with explicit approval |
-| Operational work | Existing scenario tooling | Small custom app and CloudFormation |
-| Reliability | Still depends on model and service access | Same dependency, with fixtures and fallback engine |
+| Operational work | Existing scenario tooling | Small custom app and Terraform |
+| Reliability | Still depends on model and service access | Same dependency, with fixed fixtures and failure queue |
 
 Decision: implement a tailored lab and use CloudGoat as a design reference. No CloudGoat code is copied. Adapting its internals would still require a new customer API, approval workflow, bounded diagnostics, telemetry and remediated variant.
 
 | File | Responsibility |
 | --- | --- |
-| infra.py | Build the complete CloudFormation template and IAM policies |
-| lab.py | Account verification, packaging, deployment, seed, evidence and cleanup |
-| src/bridge.py | Customer API and independent approval endpoint |
-| src/worker.py | Classic or Converse orchestration |
+| terraform/ | Authoritative infrastructure, IAM, logging and outputs |
+| infra.py | Legacy CloudFormation generator used by compatibility tests only |
+| lab.py | Account/model verification, Terraform lifecycle, seed, evidence, reset and cleanup |
+| src/bridge.py | Customer API, independent approval and review-status endpoints |
+| src/worker.py | Bounded Converse orchestration; Classic retained only as an adapter |
 | src/action.py | Business checks and the controlled diagnostic weakness |
 | src/common.py and schema.py | Signed context and matching tool definitions |
 | src/index.html | Customer application served by Bridge |
@@ -125,9 +131,9 @@ Decision: implement a tailored lab and use CloudGoat as a design reference. No C
 
 Use a dedicated, authorised sandbox AWS account with no real customer data or production trust relationships. Use temporary credentials or SSO.
 
-Install Python 3.12 and AWS CLI v2 on the presenter laptop or WSL. Internet access is required for dependency installation and AWS APIs.
+Install Python 3.12, Terraform 1.5 or newer and AWS CLI v2 on the presenter laptop or WSL. Internet access is required for dependency installation, provider installation and AWS APIs.
 
-Have a temporary deployment role permitted to manage CloudFormation, the named IAM roles and PassRole, Lambda, API Gateway, S3, DynamoDB, Logs, CloudTrail and the selected Bedrock resources. Deployment authority must not be issued to the assessor.
+Have a temporary deployment role permitted to manage the named IAM roles and PassRole, Lambda, API Gateway, SQS, S3, DynamoDB, Logs, CloudTrail and the selected Bedrock resources. Deployment authority must not be issued to the assessor.
 
 For Classic, verify existing-customer eligibility in that account and support for the selected model and region. For Converse, choose a model that supports tool use.
 
@@ -149,7 +155,7 @@ The deployer resolves either a foundation-model ARN or an inference profile and 
 
 ## Engine choice
 
-Set engine to classic for the requested Bedrock Agents path. Set it to converse only when using the fallback intentionally. The app displays which engine is running. Do not relabel the custom Converse loop as AgentCore or managed Agents Classic. If the Classic requirement is strict and the account is ineligible, obtain an eligible account before presenting that architecture.
+Set engine to converse for the authoritative demo. The app displays which engine is running. Do not relabel the custom Converse loop as AgentCore or managed Agents Classic. The Classic adapter is optional legacy compatibility code and is not required for the session.
 
 
 # Deployment configuration and commands
@@ -164,7 +170,7 @@ Unzip the lab package, open a terminal in cloudkick-lab and copy config.example.
   "owner": "Miguel Lopez",
   "is_isolated_lab": true,
   "allowed_cidr": "YOUR_PUBLIC_IPV4/32",
-  "engine": "classic",
+  "engine": "converse",
   "mode": "vulnerable",
   "model_id": "YOUR_SUPPORTED_MODEL_OR_PROFILE_ID",
   "hours": 8
@@ -176,16 +182,19 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
 export AWS_PROFILE=cloudkick-lab
 aws sts get-caller-identity
+python lab.py plan --config config.json
 python lab.py deploy --config config.json
 ```
 
 PowerShell alternative: activate .venv\Scripts\Activate.ps1 and set $env:AWS_PROFILE to the lab profile. The remaining Python commands are identical. In WSL, use the bash commands above.
 
-The script refuses an account mismatch and broad IP ranges. It creates an artifact bucket, uploads the application ZIP, generates and validates CloudFormation, then creates or updates the stack. It seeds two order documents and one private archive after stack completion. It creates no EC2, NAT gateway or public S3 website.
+The utility refuses an account mismatch and broad IP ranges. It resolves the selected model, generates private Terraform variables, creates or selects a workspace matching the deployment name, validates and applies Terraform, then seeds a fixed policy, two order documents and one private archive. It creates no EC2, NAT gateway or public S3 website.
 
-The generated template is saved as cloudkick-lsr.template.json. The private state file contains tokens, signing secret, output IDs, canary, model ARNs and code hash. Its local permissions are restricted where supported. Keep both state and configuration outside source control; restrict filesystem ACLs on Windows. Save the dependency versions used for rehearsal with python -m pip freeze.
+The private deployment file contains tokens, signing secret, output IDs, canary, model ARNs, commit SHA, code hash and build ID. Terraform local state also contains sensitive Lambda environment values. File permissions are restricted where supported. Keep the deployment file, Terraform state, generated variables and configuration outside source control; restrict filesystem ACLs on Windows. Save dependency and provider lock versions for rehearsal.
 
 
 # Post deployment and sandbox application
@@ -203,15 +212,16 @@ This operator test directly invokes Action and verifies an owned order, cross-cu
 | API route | Expected behaviour |
 | --- | --- |
 | GET / | Serve the same-origin application HTML |
-| GET /me | Return the authenticated subject, engine and mode |
+| GET /me | Return the authenticated subject, engine, mode and build ID |
 | POST /chat | Accept message and conversation ID, enqueue a job, return 202 |
 | GET /jobs/{job} | Return only that customer’s status and final answer |
 | GET /approvals/{id} | Return the stored proposal only to its customer |
 | POST /approve | Atomically approve a pending, unexpired proposal |
+| GET /reviews/{id} | Return the simulated review case only to its customer |
 
 ## Tool contract
 
-get_return_context accepts order_id. request_return and create_return accept order_id and line_id. diagnostic_catalog accepts no parameters and lists only the configured lab archive. preview_diagnostic_file accepts only the bucket and key returned by discovery. Customer identity is never an input parameter the model can choose.
+get_return_policy accepts no parameters. get_return_context accepts order_id. request_return, create_return and request_human_review accept order_id and line_id. diagnostic_catalog accepts no parameters and lists only the configured lab archive. preview_diagnostic_file accepts only the bucket and key returned by discovery. Customer identity and actor type are signed server context, never model-selected parameters.
 
 ## Expected state and retry behaviour
 
@@ -396,7 +406,7 @@ python lab.py freeze --config config.json
 | Business controls | Ownership, eligibility and app approval | Retained |
 | S3 public access | Blocked | Blocked |
 
-Change mode to secure in config.json. Keep the same account, stack name and engine. Redeploy, run component checks and start a new conversation. A changed Classic configuration creates a fresh alias/version and updates Worker to use it. Old model context must not be relied on after a schema change.
+Change mode to secure in config.json. Keep the same account, deployment name and engine. Redeploy, run component checks and start a new conversation. Old model context must not be relied on after a schema change.
 
 ```text
 python lab.py deploy --config config.json
@@ -415,13 +425,13 @@ Replace workshop tokens with federated customer authentication, use managed secr
 
 | Test | Expected result | Evidence |
 | --- | --- | --- |
-| Offline test suite | 12 passing tests | Unit-test output, with fake AWS clients clearly labelled |
+| Offline test suite | 23 passing tests | Unit-test output, with fake AWS clients clearly labelled |
 | Owned and foreign orders | Owned details, foreign order denied | Browser response and Action record |
 | Approval bypass attempt | Chat “approved” cannot complete a pending proposal | Handler denial and unchanged state |
 | Approved return and retry | One stable case ID | Completed proposal record |
 | Vulnerable diagnostic | Only exact lab archive readable | Tool result and S3 data event |
 | Outside-lab target | Rejected before S3 access | Handler result and fake-client negative test |
-| Secure stale tool | diagnostics_disabled | Operator component result |
+| Secure stale customer tool | support_entitlement_required before S3 | Operator component result |
 | Secure IAM policy | No private read or list grant | Generated policy, effective-access review |
 | Wiz evidence | Only actual supported relationships and events shown | Timestamped tenant capture or export |
 | Customer disclosure | Canary matches the manifest | Final app answer, separately from tool output |
@@ -432,7 +442,7 @@ After secure deployment, inspect the Action role’s inline policy. Optionally r
 
 ```text
 aws iam get-role-policy \
-  --role-name cloudkick-lsr-action --policy-name CloudKickScope
+  --role-name cloudkick-lsr-action --policy-name CloudKickActionScope
 aws iam simulate-principal-policy \
   --policy-source-arn ACTION_ROLE_ARN \
   --action-names s3:GetObject \
@@ -460,9 +470,9 @@ Require the browser workflows, AWS evidence join and actual Wiz inspection befor
 | Wiz lacks the expected edge or Issue | Check scan freshness, project scope and supported coverage. Use AWS configuration plus runtime evidence for missing application relations. |
 | Red cannot reach the target | The presenter /32 is blocking scanner egress, or auth/polling is unsupported. Verify approved connectivity and target support before scanning. |
 | Secure update still shows old behaviour | Check active alias, mode, stack URL and a fresh session. Freeze customer traffic while resolving partial deployment or stale configuration. |
-| Cleanup fails on a bucket | Confirm stack/trail deletion completed and inspect residual objects, versions or external logging. Never delete an unrelated bucket to clear the error. |
+| Cleanup fails on a bucket | Inspect the Terraform error, trail status and residual object versions. Never delete an unrelated bucket to clear the error. |
 
-On CloudFormation failure, inspect stack events for the first resource failure. A rollback stack can remain and retained data buckets may still exist. Correct the configuration, use the named cleanup command when appropriate and redeploy. Keep partial-deployment identifiers until cleanup is verified.
+On Terraform failure, inspect the first provider error and run `python lab.py plan --config config.json` again after correcting it. Do not delete or hand-edit local state to hide a partial deployment. Use the named cleanup command when appropriate and retain identifiers until cleanup is verified.
 
 
 # Costs safeguards and cleanup
@@ -487,9 +497,9 @@ The lab checks the expected account, restricts endpoint source IP, authenticates
 
 Export evidence needed for the session and record the final configuration.
 
-Run cleanup for the vulnerable stack and any secure twin. The command deletes the named CloudFormation stack first, then empties and deletes the four exact CloudKick-tagged buckets. Data buckets are retained until stack deletion so CloudTrail cannot continuously recreate objects during teardown.
+Run cleanup for the vulnerable deployment and any secure twin. The command destroys the exact named Terraform workspace, including its three S3 buckets, and then removes the local deployment secret file. Export evidence first because the audit bucket is also removed. If two twins are live, remove the older twin first because API Gateway's CloudWatch role setting is regional and account-wide.
 
-Verify the stacks, functions, API, roles, state table, log groups, trail and buckets are absent. Inspect failed stack events if anything remains.
+Verify the functions, API, roles, queue, state table, log groups, trail and buckets are absent. Inspect Terraform and CloudTrail errors if anything remains.
 
 Retain or remove the Wiz connector according to its owner’s instructions. Do not remove an organisation-wide connector for this lab.
 
@@ -503,7 +513,7 @@ python lab.py cleanup --config config.secure.json
 
 # Presenter schedule and transitions
 
-The main deck totals exactly 60 minutes. Slides 28 to 34 are hidden reference material, outside the timed delivery. Presenter notes include purpose, timing, cues and source URLs. Use the main recaps even if a service interruption forces a recording.
+The planned main deck totals exactly 60 minutes. The final slide count and hidden reference slides will be fixed after the three demonstrations have been validated. Presenter notes will include purpose, timing, cues and source URLs. Use the main recaps even if a service interruption forces a recording.
 
 | Slide | Time | Purpose and transition |
 | --- | --- | --- |
@@ -631,4 +641,4 @@ Primary sources reviewed on 11 October 2026. Product pages describe documented c
 
 ## Supplied source materials
 
-CloudKick AWS Teaching Deck, LSR Demo Proposal Cyber Month October, and LSR Proposal October Month supplied for this task. The rebuilt deck preserves the inspected Spike Reply logo, Arial typography, white canvas, dark green headings, teal and gold accents. Previous GCP diagrams and screenshots inform the narrative but are not presented as AWS or current Wiz evidence.
+CloudKick AWS Teaching Deck, LSR Demo Proposal Cyber Month October, and LSR Proposal October Month were supplied as source material. The future deck should preserve the selected Spike Reply visual language. Previous diagrams and screenshots may inform the narrative but must not be presented as current AWS or Wiz evidence.

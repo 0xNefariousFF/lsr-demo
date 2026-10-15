@@ -33,7 +33,7 @@ def template(c,artifact_bucket,artifact_key):
         r[kind+'Policy']={'Type':'AWS::S3::BucketPolicy','Properties':{'Bucket':ref(kind+'Bucket'),'PolicyDocument':{'Version':'2012-10-17','Statement':statements}}}
     r['State']={'Type':'AWS::DynamoDB::Table','Properties':{'TableName':state,'BillingMode':'PAY_PER_REQUEST','AttributeDefinitions':[{'AttributeName':'pk','AttributeType':'S'},{'AttributeName':'sk','AttributeType':'S'}],'KeySchema':[{'AttributeName':'pk','KeyType':'HASH'},{'AttributeName':'sk','KeyType':'RANGE'}],'TimeToLiveSpecification':{'AttributeName':'expiry','Enabled':True},'SSESpecification':{'SSEEnabled':True},'Tags':tags}}
     r['Trail']={'Type':'AWS::CloudTrail::Trail','DependsOn':['AuditPolicy'],'Properties':{'TrailName':name,'S3BucketName':ref('AuditBucket'),'IsLogging':True,'IsMultiRegionTrail':False,'IncludeGlobalServiceEvents':False,'EnableLogFileValidation':True,'AdvancedEventSelectors':[{'Name':'CloudKickObjectEvidence','FieldSelectors':[{'Field':'eventCategory','Equals':['Data']},{'Field':'resources.type','Equals':['AWS::S3::Object']},{'Field':'resources.ARN','StartsWith':[f'arn:aws:s3:::{buckets[x]}/' for x in ('Orders','Private')]}]}],'Tags':tags}}
-    actionstm=[logs('Action'),db(['dynamodb:GetItem','dynamodb:PutItem','dynamodb:UpdateItem']),stmt('s3:GetObject',f'arn:aws:s3:::{buckets["Orders"]}/orders/*')]
+    actionstm=[logs('Action'),db(['dynamodb:GetItem','dynamodb:PutItem','dynamodb:UpdateItem']),stmt('s3:GetObject',[f'arn:aws:s3:::{buckets["Orders"]}/orders/*',f'arn:aws:s3:::{buckets["Orders"]}/policies/returns.json'])]
     if mode=='vulnerable':
         actionstm += [stmt('s3:GetObject',f'arn:aws:s3:::{buckets["Private"]}/cloudkick/customer-records.json'),stmt('s3:ListBucket',f'arn:aws:s3:::{buckets["Private"]}',Condition={'StringLike':{'s3:prefix':'cloudkick/*'}})]
     r['ActionRole']=role('Action',actionstm)
@@ -52,11 +52,11 @@ def template(c,artifact_bucket,artifact_key):
         workerstm += [modelstmt,stmt('lambda:InvokeFunction',arn('lambda','function:'+funcs['Action']))]
     r['WorkerRole']=role('Worker',workerstm)
     r['BridgeRole']=role('Bridge',[logs('Bridge'),db(['dynamodb:GetItem','dynamodb:PutItem','dynamodb:UpdateItem']),stmt('lambda:InvokeFunction',arn('lambda','function:'+funcs['Worker']))])
-    base={'STATE_TABLE':state,'LAB_MODE':mode,'ENGINE':c['engine'],'LAB_EXPIRES':str(c['expires'])}
+    base={'STATE_TABLE':state,'LAB_MODE':mode,'ENGINE':c['engine'],'LAB_EXPIRES':str(c['expires']),'BUILD_SHA':c.get('build_sha','unrecorded')}
     for kind in ['Action','Worker','Bridge']:
         env=dict(base)
         if kind in ('Action','Worker'):env['CONTEXT_SECRET']=ref('ContextSecret')
-        if kind=='Action':env.update(ORDERS_BUCKET=buckets['Orders'],PRIVATE_BUCKET=buckets['Private'])
+        if kind=='Action':env.update(ORDERS_BUCKET=buckets['Orders'],POLICY_BUCKET=buckets['Orders'],PRIVATE_BUCKET=buckets['Private'])
         if kind=='Worker':
             env.update(MODEL_ID=c['model_id'],ACTION_ARN=arn('lambda','function:'+funcs['Action']))
             if classic:env.update(AGENT_ID=ref('Agent'),ALIAS_ID=att(alias,'AgentAliasId'))

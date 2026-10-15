@@ -1,15 +1,105 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CloudKick · KickAssist</title>
-<style>
-:root{--ink:#053238;--teal:#008080;--gold:#f2b800;--paper:#f2f6f5}*{box-sizing:border-box}body{margin:0;background:var(--paper);font:16px Arial,sans-serif;color:var(--ink)}header{padding:25px 6%;display:flex;justify-content:space-between;background:var(--ink);color:white}header b{font-size:24px;letter-spacing:-1px}main{max-width:1180px;margin:40px auto;padding:0 24px;display:grid;grid-template-columns:320px 1fr;gap:36px}h1{font-size:37px;line-height:1.05;margin:10px 0 22px}h2{font-size:20px}p{line-height:1.5}.eyebrow{color:var(--teal);font-size:12px;letter-spacing:2px;font-weight:bold}.panel{background:white;border:1px solid #d6e3df;padding:22px;margin-top:20px}input,textarea{width:100%;padding:12px;border:1px solid #b3c8c2;font:inherit;margin:8px 0}textarea{resize:vertical;min-height:74px}button{background:var(--ink);color:white;border:0;font:inherit;padding:12px 18px;cursor:pointer}button.secondary{background:#e7eeeb;color:var(--ink)}button:disabled{opacity:.4;cursor:wait}#chat{height:390px;overflow:auto;padding:22px;background:white;border:1px solid #d6e3df}.message{margin:0 0 22px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}.who{font-size:11px;letter-spacing:1px;color:var(--teal);font-weight:bold;margin-bottom:6px}.user{padding-left:26px;border-left:3px solid var(--gold)}small{font-size:12px;color:#517073}#status{margin:12px 0;min-height:20px}#proposal{white-space:pre-wrap;line-height:1.6}footer{max-width:1132px;margin:25px auto;padding:20px 0;border-top:1px solid #c8d8d3;font-size:12px}.hidden{display:none}@media(max-width:800px){main{grid-template-columns:1fr}header span{display:none}}
-</style><header><b>CLOUDKICK</b><span>Customer care · KickAssist</span></header><main><aside><div class="eyebrow">EVERY RETURN HAS A REASON</div><h1>Let’s get your next step right.</h1><p>Check an order, understand your options and arrange a return with KickAssist.</p><div class="panel"><h2>Your workshop session</h2><label for="token">Customer token</label><input id="token" type="password" autocomplete="off" placeholder="Paste the lab customer token"><button id="connect">Connect</button><p id="identity">Not connected</p><small>Fictional retailer. Synthetic customer data. No real payments or shipping.</small></div><div class="panel"><h2>Return approval</h2><p>Ask KickAssist to prepare a return, then review its approval ID here.</p><input id="approval" placeholder="Approval ID"><button id="review" class="secondary">Review proposal</button><p id="proposal"></p><button id="approve" class="hidden">Approve this return</button></div></aside><section><div class="eyebrow">YOUR RETURNS ASSISTANT</div><h2>How can I help?</h2><div id="chat" aria-live="polite"><div class="message">Welcome to CloudKick. Tell me which order you need help with.</div></div><form id="form"><label for="message">Message</label><textarea id="message" placeholder="Can you check the return options for ORD-1001?"></textarea><button id="send" disabled>Send message</button> <button id="reset" type="button" class="secondary">New conversation</button></form><p id="status" role="status"></p><small id="engine"></small></section></main><footer>CloudKick is a fictional teaching scenario for Learn & Share Remix. This app performs simulated return operations only.</footer>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CloudKick · KickAssist</title>
+  <style>
+    :root{--ink:#053238;--teal:#008080;--gold:#f2b800;--paper:#f2f6f5;--line:#d6e3df}*{box-sizing:border-box}
+    body{margin:0;background:var(--paper);font:16px Arial,sans-serif;color:var(--ink)}
+    header{padding:25px 6%;display:flex;justify-content:space-between;background:var(--ink);color:white}header b{font-size:24px;letter-spacing:-1px}
+    main{max-width:1180px;margin:40px auto;padding:0 24px;display:grid;grid-template-columns:330px 1fr;gap:36px}
+    h1{font-size:37px;line-height:1.05;margin:10px 0 22px}h2{font-size:20px}p{line-height:1.5}.eyebrow{color:var(--teal);font-size:12px;letter-spacing:2px;font-weight:bold}
+    .panel{background:white;border:1px solid var(--line);padding:22px;margin-top:20px}.panel h2{margin-top:0}
+    input,textarea{width:100%;padding:12px;border:1px solid #b3c8c2;font:inherit;margin:8px 0}textarea{resize:vertical;min-height:74px}
+    button{background:var(--ink);color:white;border:0;font:inherit;padding:12px 18px;cursor:pointer}button.secondary{background:#e7eeeb;color:var(--ink)}button:disabled{opacity:.4;cursor:wait}
+    #chat{height:390px;overflow:auto;padding:22px;background:white;border:1px solid var(--line)}.message{margin:0 0 22px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}.who{font-size:11px;letter-spacing:1px;color:var(--teal);font-weight:bold;margin-bottom:6px}.user{padding-left:26px;border-left:3px solid var(--gold)}
+    small{font-size:12px;color:#517073}#status{margin:12px 0;min-height:20px}.detail{white-space:pre-wrap;line-height:1.6}footer{max-width:1132px;margin:25px auto;padding:20px 0;border-top:1px solid #c8d8d3;font-size:12px}.hidden{display:none}
+    @media(max-width:800px){main{grid-template-columns:1fr}header span{display:none}}
+  </style>
+</head>
+<body>
+<header><b>CLOUDKICK</b><span>Customer care · KickAssist</span></header>
+<main>
+  <aside>
+    <div class="eyebrow">EVERY RETURN HAS A REASON</div>
+    <h1>Let’s get your next step right.</h1>
+    <p>Check an order, understand your options and arrange a return with KickAssist.</p>
+    <div class="panel">
+      <h2>Your workshop session</h2>
+      <label for="token">Customer token</label>
+      <input id="token" type="password" autocomplete="off" placeholder="Paste the lab customer token">
+      <button id="connect">Connect</button>
+      <p id="identity">Not connected</p>
+      <small>Fictional retailer. Synthetic customer data. No real payments or shipping.</small>
+    </div>
+    <div class="panel">
+      <h2>Return approval</h2>
+      <p>Paste the approval ID supplied by KickAssist.</p>
+      <label for="approval">Approval ID</label>
+      <input id="approval" autocomplete="off" placeholder="24-character approval ID">
+      <button id="approval-review" class="secondary">Review proposal</button>
+      <p id="proposal" class="detail"></p>
+      <button id="approve" class="hidden">Approve this return</button>
+    </div>
+    <div class="panel">
+      <h2>Human review</h2>
+      <p>Track a simulated support referral supplied by KickAssist.</p>
+      <label for="review-id">Review reference</label>
+      <input id="review-id" autocomplete="off" placeholder="REV-…">
+      <button id="review-status" class="secondary">Check status</button>
+      <p id="review-detail" class="detail"></p>
+    </div>
+  </aside>
+  <section>
+    <div class="eyebrow">YOUR RETURNS ASSISTANT</div>
+    <h2>How can I help?</h2>
+    <div id="chat" aria-live="polite"><div class="message">Welcome to CloudKick. Tell me which order you need help with.</div></div>
+    <form id="form">
+      <label for="message">Message</label>
+      <textarea id="message" placeholder="Can you check the return options for ORD-1001?"></textarea>
+      <button id="send" disabled>Send message</button>
+      <button id="reset" type="button" class="secondary">New conversation</button>
+    </form>
+    <p id="status" role="status"></p>
+    <small id="engine"></small>
+  </section>
+</main>
+<footer>CloudKick is a fictional teaching scenario for Learn &amp; Share Remix. This app performs simulated return operations only.</footer>
 <script>
-let token='',sid=crypto.randomUUID(),busy=false,reviewed='';const $=id=>document.getElementById(id);
-async function api(path,method='GET',data){const r=await fetch('./'+path,{method,headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
-function msg(who,content){const box=document.createElement('div');box.className='message '+(who==='You'?'user':'');const head=document.createElement('div');head.className='who';head.textContent=who;const text=document.createElement('div');text.textContent=content;box.append(head,text);$('chat').append(box);$('chat').scrollTop=$('chat').scrollHeight}
+let token='',sid=crypto.randomUUID(),busy=false,reviewed='';
+const $=id=>document.getElementById(id);
+async function api(path,method='GET',data){
+  const r=await fetch('./'+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
+  const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j;
+}
+function msg(who,content){
+  const box=document.createElement('div');box.className='message '+(who==='You'?'user':'');
+  const head=document.createElement('div');head.className='who';head.textContent=who;
+  const text=document.createElement('div');text.textContent=content;box.append(head,text);$('chat').append(box);$('chat').scrollTop=$('chat').scrollHeight;
+}
 function failure(e){$('status').textContent=e.message}
-$('connect').onclick=async()=>{try{token=$('token').value.trim();const me=await api('me');$('identity').textContent='Customer '+me.customer;$('engine').textContent='Lab engine: '+(me.engine==='classic'?'Amazon Bedrock Agents Classic':'Custom agent using Amazon Bedrock Converse')+' · '+me.mode;$('send').disabled=false;$('status').textContent='Connected'}catch(e){failure(e)}};
-$('form').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;$('send').disabled=true;const m=$('message').value;$('message').value='';msg('You',m);try{const {job}=await api('chat','POST',{message:m,session:sid});$('status').textContent='KickAssist is working. Reference '+job;for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,2000));const j=await api('jobs/'+job);if(['complete','error'].includes(j.status)){msg('KickAssist',j.answer);$('status').textContent='Reference '+job;return}}throw Error('Still running. Save the reference and check presenter logs.')}catch(e){failure(e)}finally{busy=false;$('send').disabled=false}};
-$('reset').onclick=()=>{if(busy)return;sid=crypto.randomUUID();$('chat').textContent='';$('status').textContent='New conversation. Existing approvals and returns remain.'};
-$('review').onclick=async()=>{reviewed='';$('approve').classList.add('hidden');try{const id=$('approval').value.trim();const a=await api('approvals/'+id);$('proposal').textContent=a.item_name+'\nOrder '+a.order_id+' / '+a.line_id+'\nSimulated value £'+a.amount_gbp+'\nStatus: '+a.status;if(a.status==='pending'){reviewed=id;$('approve').classList.remove('hidden')}}catch(e){failure(e)}};
+$('connect').onclick=async()=>{try{
+  token=$('token').value.trim();const me=await api('me');$('identity').textContent='Customer '+me.customer;
+  $('engine').textContent='Lab engine: '+(me.engine==='classic'?'Amazon Bedrock Agents Classic':'Custom agent using Amazon Bedrock Converse')+' · '+me.mode+' · build '+me.build_sha.slice(0,12);
+  $('send').disabled=false;$('status').textContent='Connected';
+}catch(e){failure(e)}};
+$('form').onsubmit=async e=>{e.preventDefault();if(busy)return;const m=$('message').value.trim();if(!m)return;
+  busy=true;$('send').disabled=true;$('message').value='';msg('You',m);
+  try{const {job}=await api('chat','POST',{message:m,session:sid});$('status').textContent='KickAssist is working. Reference '+job;
+    for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,2000));const j=await api('jobs/'+job);if(['complete','error'].includes(j.status)){msg('KickAssist',j.answer);$('status').textContent='Reference '+job;return}}
+    throw Error('Still running. Save the reference and check presenter logs.');
+  }catch(e){failure(e)}finally{busy=false;$('send').disabled=false}
+};
+$('reset').onclick=()=>{if(busy)return;sid=crypto.randomUUID();$('chat').innerHTML='<div class="message">New conversation started. Tell me which order you need help with.</div>';$('status').textContent='Existing approvals and review cases remain available.'};
+$('approval-review').onclick=async()=>{reviewed='';$('approve').classList.add('hidden');try{
+  const id=$('approval').value.trim();const a=await api('approvals/'+id);$('proposal').textContent=a.item_name+'\nOrder '+a.order_id+' / '+a.line_id+'\nSimulated value £'+a.amount_gbp+'\nStatus: '+a.status;
+  if(a.status==='pending'){reviewed=id;$('approve').classList.remove('hidden')}
+}catch(e){failure(e)}};
 $('approve').onclick=async()=>{if(!reviewed)return;try{await api('approve','POST',{approval_id:reviewed});$('proposal').textContent+='\nApproved. Ask KickAssist to create this return.';$('approve').classList.add('hidden');reviewed=''}catch(e){failure(e)}};
-</script></html>
+$('review-status').onclick=async()=>{try{
+  const r=await api('reviews/'+$('review-id').value.trim());$('review-detail').textContent=r.item_name+'\nOrder '+r.order_id+' / '+r.line_id+'\nReason: '+r.reason+'\nStatus: '+r.status+'\nNo external ticket was created.';
+}catch(e){failure(e)}};
+</script>
+</body>
+</html>
