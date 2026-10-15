@@ -189,42 +189,124 @@ Enter the access key ID, secret access key, approved Region and `json` output
 when prompted. Then export `AWS_PROFILE`, verify STS as above, and deactivate or
 delete the access key immediately after cleanup.
 
-## 5. Select and test a Bedrock model
+## 5. Select and test the pinned Bedrock model
 
-List the models and inference profiles visible in the chosen Region:
+Use **Anthropic Claude Sonnet 4.6** through its EU geography inference profile:
 
 ```bash
-aws bedrock list-foundation-models \
-  --region "$AWS_REGION" \
-  --query 'modelSummaries[].{Name:modelName,Id:modelId,Inputs:inputModalities,Outputs:outputModalities}' \
-  --output table
+export MODEL_ID='eu.anthropic.claude-sonnet-4-6'
+```
 
+This is the demo's pinned model. It is active, supports Bedrock Converse and
+client-side tool calling, and is available from `eu-west-2`. The EU inference
+profile can route across supported EU Regions, which gives Bedrock more capacity
+to serve the request while keeping inference in the EU geography. Sonnet is a
+better fit than Haiku for the multi-turn policy, refund and red-team stories.
+Sonnet 5.5 is not the default for this demo: it was released recently, enables
+adaptive reasoning by default and adds latency and behaviour changes that the
+scenario does not need.
+
+The identifiers and capabilities above are taken from the current
+[AWS Claude Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html).
+AWS documents how to verify profile destinations and SCP compatibility in
+[Supported Regions and models for inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+Do not silently replace this ID with the newest model shown in the console. A
+different model changes the scenario behaviour and must be rehearsed again.
+
+### 5.1 Confirm the exact profile is active
+
+```bash
 aws bedrock list-inference-profiles \
   --region "$AWS_REGION" \
   --type-equals SYSTEM_DEFINED \
-  --query 'inferenceProfileSummaries[].{Name:inferenceProfileName,Id:inferenceProfileId,Status:status}' \
+  --query "inferenceProfileSummaries[?inferenceProfileId=='${MODEL_ID}'].{Id:inferenceProfileId,Name:inferenceProfileName,Status:status}" \
   --output table
+
+PROFILE_STATUS=$(aws bedrock list-inference-profiles \
+  --region "$AWS_REGION" \
+  --type-equals SYSTEM_DEFINED \
+  --query "inferenceProfileSummaries[?inferenceProfileId=='${MODEL_ID}'].status | [0]" \
+  --output text)
+test "$PROFILE_STATUS" = 'ACTIVE' || {
+  printf 'Expected ACTIVE profile %s; received %s\n' "$MODEL_ID" "$PROFILE_STATUS" >&2
+  exit 1
+}
 ```
 
-Choose a model or inference profile that supports the Converse API and tool use.
-Record the exact identifier; do not infer support from the display name alone.
+Inspect the actual destination model ARNs. This is also the authoritative check
+for data residency and organisation SCP compatibility; do not rely only on the
+`eu.` prefix.
 
 ```bash
-export MODEL_ID='REPLACE_WITH_MODEL_OR_INFERENCE_PROFILE_ID'
-
-aws bedrock-runtime converse \
+aws bedrock get-inference-profile \
   --region "$AWS_REGION" \
-  --model-id "$MODEL_ID" \
-  --messages '[{"role":"user","content":[{"text":"Reply with READY only."}]}]' \
-  --inference-config '{"maxTokens":20,"temperature":0}' \
-  --query 'output.message.content[0].text' \
-  --output text
+  --inference-profile-identifier "$MODEL_ID" \
+  --query '{Id:inferenceProfileId,Status:status,DestinationModels:models[].modelArn}' \
+  --output json
 ```
 
-This call incurs a small inference charge. It should return `READY`. An
-`AccessDeniedException`, marketplace/subscription error or unsupported Converse
-error must be resolved before deployment. Repeat the test after changing the
-model or Region.
+All destination model ARNs must be acceptable under the sandbox's data-location
+and Service Control Policies. If an SCP blocks any destination Region, the whole
+cross-Region invocation can fail.
+
+### 5.2 Run the full Converse tool-use preflight
+
+The old `READY` prompt proved only text generation. This check exercises the
+contract the demo actually needs: the model must request a tool, accept its
+result and finish the answer. It runs the round trip three times at temperature
+zero and incurs a small inference charge.
+
+```bash
+chmod +x scripts/bedrock_model_preflight.sh
+./scripts/bedrock_model_preflight.sh 3
+```
+
+The required result is three `PASS` lines followed by:
+
+```text
+MODEL PREFLIGHT PASSED: eu.anthropic.claude-sonnet-4-6 in eu-west-2
+```
+
+Do not deploy until this passes. Run it again on the presenter network on the
+day of the demo. This proves current access, Converse compatibility and the
+two-turn tool contract; it cannot guarantee that every natural-language answer
+or red-team attempt will be identical.
+
+### 5.3 Resolve access failures without changing the scenario
+
+- `AccessDeniedException`: confirm that `cloudkick-developer` can list/get
+  Bedrock profiles and invoke both the profile and its destination foundation
+  models. Also check organisation SCPs for every destination ARN printed above.
+- marketplace, subscription or model-access error: have the sandbox
+  administrator enable the Anthropic model offer, accept any required terms and
+  allow the account's model-access prerequisites, then repeat the preflight.
+- `ResourceNotFoundException` or an empty profile result: first confirm that
+  `AWS_REGION` is `eu-west-2` and that the CLI is using the intended sandbox
+  account. Do not infer availability from the model's display name.
+- throttling or quota errors: inspect the account's Bedrock quotas for Sonnet
+  4.6, wait for capacity to recover and rerun all three attempts. Do not treat a
+  single successful call as the demo readiness gate.
+
+If organisation policy forbids EU cross-Region inference, use the same model's
+in-Region identifier as the first fallback:
+
+```bash
+export MODEL_ID='anthropic.claude-sonnet-4-6'
+
+aws bedrock get-foundation-model \
+  --region "$AWS_REGION" \
+  --model-identifier "$MODEL_ID" \
+  --query 'modelDetails.{Id:modelId,Name:modelName,Status:modelLifecycle.status}' \
+  --output table
+
+./scripts/bedrock_model_preflight.sh 3
+```
+
+Use this fallback only when the metadata command and all three tool-loop checks
+pass in `eu-west-2`. If neither Sonnet 4.6 option is available, stop and resolve
+account access or agree a different model explicitly; do not deploy an untested
+automatic fallback.
 
 ## 6. Determine the presenter source CIDR
 
@@ -280,7 +362,7 @@ Region, public CIDR and tested model identifier.
   "allowed_cidr": "YOUR_PUBLIC_IPV4/32",
   "engine": "converse",
   "mode": "vulnerable",
-  "model_id": "YOUR_TESTED_MODEL_OR_INFERENCE_PROFILE_ID",
+  "model_id": "eu.anthropic.claude-sonnet-4-6",
   "hours": 8
 }
 ```
