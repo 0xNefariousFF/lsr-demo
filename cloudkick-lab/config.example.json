@@ -4,7 +4,7 @@
   "region": "eu-west-2",
   "owner": "Miguel Lopez",
   "is_isolated_lab": true,
-  "allowed_cidr": "REPLACE_WITH_PRESENTER_PUBLIC_IPV4/32",
+  "allowed_cidr": "auto",
   "engine": "converse",
   "mode": "vulnerable",
   "model_id": "eu.anthropic.claude-sonnet-4-6",

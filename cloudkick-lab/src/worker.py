@@ -2,7 +2,7 @@ import os,json,time
 import boto3
 from botocore.config import Config
 from common import sign_context
-from schema import INSTRUCTIONS,converse_tools
+from schema import instructions,converse_tools
 
 table=boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
 cfg=Config(read_timeout=180,connect_timeout=10,retries={'max_attempts':1})
@@ -17,7 +17,8 @@ def converse(prompt,attrs,session,previous):
     messages=previous+[{'role':'user','content':[{'text':prompt}]}]
     ui_actions=[]
     for _ in range(6):
-        r=client.converse(modelId=os.environ['MODEL_ID'],system=[{'text':INSTRUCTIONS}],messages=messages,toolConfig={'tools':converse_tools(os.environ['LAB_MODE'])},inferenceConfig={'maxTokens':1800,'temperature':0})
+        mode=os.environ['LAB_MODE']
+        r=client.converse(modelId=os.environ['MODEL_ID'],system=[{'text':instructions(mode)}],messages=messages,toolConfig={'tools':converse_tools(mode)},inferenceConfig={'maxTokens':1800,'temperature':0})
         m=r['output']['message'];messages.append(m)
         uses=[b['toolUse'] for b in m['content'] if 'toolUse' in b]
         if not uses:

@@ -7,7 +7,7 @@ os.environ.update(STATE_TABLE='test',LAB_EXPIRES=str(int(time.time())+1000),CONT
 fake=types.ModuleType('boto3');fake.client=MagicMock();fake.resource=MagicMock();sys.modules['boto3']=fake
 conditions=types.ModuleType('boto3.dynamodb.conditions');conditions.Key=lambda value:value
 sys.modules['boto3.dynamodb']=types.ModuleType('boto3.dynamodb');sys.modules['boto3.dynamodb.conditions']=conditions
-import common,action,bridge,infra
+import common,action,bridge,infra,lab,rehearse,schema
 
 class Conditional(Exception):pass
 class State:
@@ -85,6 +85,11 @@ class Boundaries(unittest.TestCase):
     def test_vulnerable_private_read_is_real_tool_output(self):
         action.s3.get_object.return_value={'Body':types.SimpleNamespace(read=lambda *a:b'{"canary":"SYNTHETIC"}'),'ResponseMetadata':{'RequestId':'s3-id'}}
         r=self.call('read_historical_service_record',bucket='lab-private',key='cloudkick/customer-records.json');self.assertIn('SYNTHETIC',r['content']);self.assertEqual(r['s3_request_id'],'s3-id')
+    def test_auto_presenter_cidr_is_narrow_ipv4(self):
+        response=MagicMock();response.read.return_value=b'198.51.100.42\n'
+        response.__enter__.return_value=response
+        with patch('lab.urllib.request.urlopen',return_value=response):
+            self.assertEqual(lab.presenter_ipv4(),'198.51.100.42/32')
     def test_template_modes_and_dependencies(self):
         for engine in ('classic','converse'):
             ts=[]
@@ -111,6 +116,16 @@ class Boundaries(unittest.TestCase):
             p=lambda t:json.dumps(t['Resources']['ActionRole']['Properties']['Policies'])
             self.assertIn('/cloudkick/customer-records.json',p(ts[0]));self.assertNotIn('/cloudkick/customer-records.json',p(ts[1]))
             if engine=='classic':self.assertEqual(len(ts[1]['Resources']['Agent']['Properties']['ActionGroups'][0]['FunctionSchema']['Functions']),5)
+    def test_vulnerable_instructions_enable_bounded_migration_path_only(self):
+        vulnerable=' '.join(schema.instructions('vulnerable').split());secure=' '.join(schema.instructions('secure').split())
+        self.assertIn('reference marker means the canary field',vulnerable)
+        self.assertNotIn('reference marker means the canary field',secure)
+        self.assertNotIn('historical service index',schema.INSTRUCTIONS.split('For broad questions')[0])
+    def test_external_script_has_owned_anchor_without_internal_targets(self):
+        prompts=' '.join(rehearse.OFFENSIVE_PROMPTS)
+        self.assertIn('ORD-2001',prompts)
+        for internal in ('search_historical_service_records','read_historical_service_record','cloudkick/customer-records.json'):
+            self.assertNotIn(internal,prompts)
 
 class BridgeBoundaries(unittest.TestCase):
     def setUp(self):
@@ -138,6 +153,8 @@ class BridgeBoundaries(unittest.TestCase):
         self.assertEqual(terraform.count('s3_bucket        = aws_s3_object.lambda_package.bucket'),3)
         self.assertEqual(terraform.count('s3_key           = aws_s3_object.lambda_package.key'),3)
         self.assertNotIn('filename         = data.archive_file.lambda.output_path',terraform)
+        self.assertIn('"x-amazon-apigateway-binary-media-types"',terraform)
+        self.assertIn('"*/*"',terraform)
     def test_foreign_approval_is_not_disclosed(self):
         self.db.get_item.return_value={'Item':{'subject':'C-105','approval_id':'a'*24,'status':'pending','item_name':'other customer item'}}
         r=self.call('/approvals/'+'a'*24);self.assertEqual(r['statusCode'],404);self.assertNotIn('other customer item',r['body'])

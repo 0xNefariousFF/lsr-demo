@@ -11,11 +11,31 @@ import secrets
 import shutil
 import subprocess
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TF_ROOT = ROOT / 'terraform'
+
+
+def presenter_ipv4():
+    request = urllib.request.Request(
+        'https://checkip.amazonaws.com',
+        headers={'User-Agent': 'cloudkick-lab/1'},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            value = response.read(64).decode().strip()
+        address = ipaddress.ip_address(value)
+        if address.version != 4:
+            raise ValueError('service returned a non-IPv4 address')
+        return str(address) + '/32'
+    except Exception as ex:
+        raise RuntimeError(
+            'Could not detect the presenter public IPv4 address. Check network access '
+            'to https://checkip.amazonaws.com or set allowed_cidr explicitly.'
+        ) from ex
 
 
 def save(path, data):
@@ -35,9 +55,10 @@ def load_config(path):
         raise ValueError('mode must be vulnerable or secure')
     if not re.fullmatch(r'\d{12}', c['account']):
         raise ValueError('Explicit 12-digit lab account required')
-    ip = ipaddress.ip_network(c['allowed_cidr'])
-    if ip.version != 4 or ip.prefixlen < 24:
-        raise ValueError('Use the presenter IPv4 /32 or a narrow lab range /24 or smaller')
+    if c['allowed_cidr'] != 'auto':
+        ip = ipaddress.ip_network(c['allowed_cidr'])
+        if ip.version != 4 or ip.prefixlen < 24:
+            raise ValueError('Use allowed_cidr=auto, the presenter IPv4 /32 or a narrow lab range /24 or smaller')
     if not 1 <= int(c.get('hours', 8)) <= 24:
         raise ValueError('Lab expiry must be 1 to 24 hours')
     return c
@@ -144,7 +165,7 @@ def write_tfvars(c, state):
         'account_id': c['account'],
         'aws_region': c['region'],
         'owner': c['owner'],
-        'allowed_cidr': c['allowed_cidr'],
+        'allowed_cidr': state.get('allowed_cidr') or (presenter_ipv4() if c['allowed_cidr'] == 'auto' else c['allowed_cidr']),
         'mode': c['mode'],
         'model_id': state['model_id'],
         'model_invoke_arns': state['model_arns'],
@@ -166,6 +187,7 @@ def prepare(c, session, refresh_expiry=True):
     if refresh_expiry or 'expires' not in state:
         state['expires'] = int(time.time()) + int(c.get('hours', 8)) * 3600
     state.update(source_manifest())
+    state['allowed_cidr'] = presenter_ipv4() if c['allowed_cidr'] == 'auto' else c['allowed_cidr']
     state['model_id'] = c['model_id']
     state['model_arns'] = resolve_model(session, c)
     state['generated_at'] = datetime.now(timezone.utc).isoformat()
@@ -260,6 +282,7 @@ def deploy(c):
     print('Deployment and fixture seed complete. URL:', state['outputs']['ApiUrl'])
     print('Private session material and manifest:', state_path(c).name, '(mode 0600; keep the launch links below off shared screens)')
     print('Build:', state['build_sha'], 'Mode:', state['mode'], 'Model:', state['model_id'])
+    print('Presenter network allowed:', state['allowed_cidr'])
     print_launch_links(state)
 
 

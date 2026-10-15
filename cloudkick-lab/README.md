@@ -8,7 +8,10 @@ This package implements a fictional customer-return agent and a deliberately bou
    Follow `docs/AWS_DEPLOYMENT_RUNBOOK.md` for the complete AWS CLI, deployment,
    validation and teardown sequence.
 2. Use `engine=converse`. This is the authoritative demo path and implements a custom agent using the Amazon Bedrock Converse API. It is not Agents Classic or AgentCore. The Classic adapter is retained temporarily for compatibility testing only.
-3. Copy `config.example.json` to `config.json` and replace all values marked `REPLACE`. A narrow presenter source IP range is mandatory.
+3. Copy `config.example.json` to `config.json` and replace all values marked `REPLACE`.
+   Keep `allowed_cidr` set to `auto` to detect the deployment machine's current
+   public IPv4 address on every plan or deploy. A fixed `/24` through `/32` remains
+   available for a known corporate egress range.
 4. Install local dependencies and run the offline tests.
 
 ```bash
@@ -32,11 +35,16 @@ A private `<name>.state.json` stores the underlying customer tokens, context-sig
 
 ```bash
 python smoke.py --state cloudkick-lsr.state.json
+python rehearse.py --state cloudkick-lsr.state.json --perspective all
 python lab.py evidence --config config.json --job JOB_REFERENCE
 python lab.py freeze --config config.json
 ```
 
-`smoke.py` is an operator component check with explicit pass/fail exits. It does not demonstrate the external-user path or model behaviour. The customer application must be rehearsed separately. Offline tests use fake AWS clients. No successful AWS deployment or Wiz tenant investigation is claimed by the supplied package.
+`smoke.py` checks the deployed portal, decoded visual assets, launch token and
+Action component boundaries with explicit pass/fail exits. `rehearse.py` then uses
+the public web API and the pinned model to exercise the intended and offensive
+stories end to end. Offline tests use fake AWS clients. No successful AWS deployment
+or Wiz tenant investigation is claimed by the supplied package.
 
 ## Repair
 
@@ -75,6 +83,7 @@ Run cleanup for both stacks if you deployed a secure twin. The expiry blocks app
 | `src/index.html` | Same-origin customer sandbox application |
 | `tests/test_boundaries.py` | Offline authorisation and configuration tests |
 | `smoke.py` | Operator component validation against deployed AWS |
+| `rehearse.py` | Repeatable intended and offensive public-API rehearsal |
 | `docs/IMPLEMENTATION.md` | Full build, rehearsal, investigation and troubleshooting guide |
 | `docs/DEMO_RUNBOOK.md` | Presenter-ready customer, assessor and defender workflows |
 

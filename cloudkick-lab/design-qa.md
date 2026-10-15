@@ -1,11 +1,11 @@
 # Option 1 design QA
 
 - Source visual truth: `docs/qa/option-1-source.png`
-- Browser-rendered implementation: `docs/qa/option-1-implementation.png`
-- Combined comparison: `docs/qa/option-1-comparison.png`
+- Browser-rendered implementation: `docs/qa/option-1-implementation-latest.png`
+- Combined comparison: `docs/qa/option-1-comparison-latest.png`
 - Responsive evidence: `docs/qa/option-1-mobile.png`
 - Desktop viewport: 1440 × 1024 CSS pixels, device scale factor 1
-- Source pixels: 1487 × 1058, normalized to 1440 × 1024 for comparison
+- Source pixels: 1440 × 1024
 - Implementation pixels: 1440 × 1024
 - Mobile viewport: 390 × 844 CSS pixels, device scale factor 1
 - State: signed-in C-104 customer, pending CloudRunner return proposal, secondary
@@ -40,7 +40,7 @@ No actionable P0, P1 or P2 differences remain.
 
 ## Full-view comparison evidence
 
-`docs/qa/option-1-comparison.png` places the normalized source and final browser capture
+`docs/qa/option-1-comparison-latest.png` places the source and final browser capture
 in one 2880 × 1024 image. The header, hero, two-column portal, inline return proposal,
 secondary-item row, composer and collapsed Demo details align in hierarchy and state.
 
@@ -63,6 +63,11 @@ are legible in the original-resolution captures.
    product no longer overlaps its details.
 3. Final desktop and mobile passes found no remaining P0, P1 or P2 issues. No browser
    console errors were recorded.
+4. The binary-delivery regression pass loaded the hero JPEG, both 720 × 720 WebP
+   product cutouts and all local fonts in Chromium. Every image reported a non-zero
+   natural width, the page had zero horizontal overflow and console/page-error capture
+   was empty. API Gateway binary decoding is additionally enforced by Terraform and
+   checked against the deployed URL by `smoke.py`.
 
 ## Follow-up polish
 

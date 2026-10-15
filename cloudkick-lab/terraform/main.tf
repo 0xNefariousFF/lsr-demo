@@ -568,6 +568,12 @@ locals {
     swagger = "2.0"
     info    = { title = "CloudKick", version = "1" }
     schemes = ["https"]
+    "x-amazon-apigateway-binary-media-types" = [
+      "*/*",
+      "font/woff2",
+      "image/jpeg",
+      "image/webp"
+    ]
     paths = {
       "/" = {
         get = {

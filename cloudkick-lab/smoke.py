@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -54,6 +56,34 @@ def main():
         else:
             failures.append(label)
             print('FAIL', label, detail)
+
+    def fetch(path, token=None):
+        headers = {'User-Agent': 'cloudkick-smoke/1'}
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        request = urllib.request.Request(state['outputs']['ApiUrl'].rstrip('/') + path, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.status, dict(response.headers.items()), response.read()
+        except urllib.error.HTTPError as ex:
+            return ex.code, dict(ex.headers.items()), ex.read()
+
+    portal_status, portal_headers, portal_body = fetch('/')
+    check('portal is reachable from the current presenter network', portal_status == 200, portal_body[:300].decode(errors='replace'))
+    check('portal serves the Option 1 application', b'Start or manage a return' in portal_body, portal_body[:120].decode(errors='replace'))
+
+    hero_status, hero_headers, hero_body = fetch('/assets/cloudkick-returns-hero.jpg')
+    hero_type = hero_headers.get('Content-Type') or hero_headers.get('content-type')
+    check('hero image is delivered as decoded JPEG', hero_status == 200 and hero_type == 'image/jpeg' and hero_body.startswith(b'\xff\xd8\xff'), repr((hero_status, hero_type, hero_body[:12])))
+
+    shoe_status, shoe_headers, shoe_body = fetch('/assets/cloudrunner-grey.webp')
+    webp = len(shoe_body) >= 12 and shoe_body[:4] == b'RIFF' and shoe_body[8:12] == b'WEBP'
+    shoe_type = shoe_headers.get('Content-Type') or shoe_headers.get('content-type')
+    check('product image is delivered as decoded WebP', shoe_status == 200 and shoe_type == 'image/webp' and webp, repr((shoe_status, shoe_type, shoe_body[:12])))
+
+    me_status, _, me_body = fetch('/me', state['tokens']['C-104'])
+    me = json.loads(me_body) if me_status == 200 else {}
+    check('customer launch token reaches the authenticated API', me_status == 200 and me.get('customer') == 'C-104', repr((me_status, me_body[:200])))
 
     policy = call('get_return_policy')
     check('fixed return policy is readable', policy.get('policy', {}).get('automatic_return', {}).get('window_days') == 30, repr(policy))

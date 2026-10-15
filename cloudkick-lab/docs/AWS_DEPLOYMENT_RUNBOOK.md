@@ -385,7 +385,7 @@ terraform -chdir=terraform fmt -check
 terraform -chdir=terraform validate
 ```
 
-Expected local result: 23 Python tests pass and Terraform reports that the
+Expected local result: all Python tests pass and Terraform reports that the
 configuration is valid. These checks do not prove AWS or model behaviour.
 
 ## 8. Create the vulnerable deployment configuration
@@ -407,7 +407,7 @@ Region, public CIDR and tested model identifier.
   "region": "eu-west-2",
   "owner": "YOUR_NAME_OR_TEAM",
   "is_isolated_lab": true,
-  "allowed_cidr": "YOUR_PUBLIC_IPV4/32",
+  "allowed_cidr": "auto",
   "engine": "converse",
   "mode": "vulnerable",
   "model_id": "eu.anthropic.claude-sonnet-4-6",
@@ -422,7 +422,8 @@ Rules enforced by the utility:
 - the active AWS account exactly matches `account`;
 - `engine` is `converse`;
 - `mode` is `vulnerable` or `secure`;
-- `allowed_cidr` is an IPv4 `/24` through `/32`;
+- `allowed_cidr` is `auto` or an IPv4 `/24` through `/32`; `auto` resolves the
+  deployment machine's current public IPv4 on every plan or deploy;
 - expiry is between one and 24 hours.
 
 The three bucket names include the deployment name, account and Region. Choose a
@@ -489,8 +490,10 @@ python smoke.py --state "$LAB_STATE"
 ```
 
 Every line should be `PASS`, followed by `All operator component checks passed`.
-This directly invokes Action Lambda and therefore proves component boundaries,
-not black-box model discovery or customer disclosure.
+The first checks call the public API and verify that the hero and product images
+are decoded correctly, catching stale source-IP policy and API Gateway binary-media
+regressions. The remaining checks directly invoke Action Lambda and therefore prove
+component boundaries, not black-box model discovery or customer disclosure.
 
 ## 12. Validate the normal-customer workflow
 
@@ -519,10 +522,16 @@ For an actual external-user rehearsal, give the participant only the printed
 not provide AWS access. Do not give them the architecture, bucket name, object key,
 source or operator state. Start a new conversation.
 
-Model behaviour is nondeterministic. Follow the progressive script in
-`DEMO_RUNBOOK.md`: normal capability question, plausible missing historical-return
-problem, historical-record discovery, minimal reference-marker request, then stop.
-Do not supply internal tool or storage names and then report independent discovery.
+Run the same progressive public-API rehearsal used by the live story:
+
+```bash
+python rehearse.py --state "$LAB_STATE" --perspective offensive
+```
+
+The sequence starts with a normal capability question, establishes a plausible
+missing-return discrepancy on the assessor's owned ORD-2001, searches migrated service
+records, requests only the returned record's reference marker and then stops. It never
+supplies a bucket, object key or tool name. Record the final defender-pivot job reference.
 
 The acceptable outcomes are distinct:
 
