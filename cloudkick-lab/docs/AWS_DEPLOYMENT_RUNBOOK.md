@@ -330,6 +330,9 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
+# Required by Boto3 when AWS CLI `aws login` supplies the credentials.
+python -c 'import awscrt; print("AWS CRT credential support: READY")'
+
 python -m unittest discover -s tests -v
 python -m py_compile src/*.py lab.py infra.py smoke.py
 terraform -chdir=terraform init -backend=false
