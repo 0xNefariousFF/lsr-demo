@@ -28,7 +28,8 @@ be able to:
 - invoke the selected Bedrock model or inference profile for validation.
 
 Do not give the deployment identity or AWS credentials to the external-user
-participant. Use temporary SSO credentials where possible.
+participant. Prefer temporary credentials from `aws login` rather than creating
+a long-lived access key.
 
 ## 2. Install the local prerequisites
 
@@ -78,19 +79,59 @@ important.
 
 ## 4. Configure AWS CLI credentials
 
-For AWS IAM Identity Center/SSO:
+### Recommended: log in with the existing IAM console user
+
+AWS CLI v2.32.0 or newer can exchange existing AWS Management Console
+credentials for temporary local-development credentials. This avoids storing a
+long-lived access key.
+
+An administrator must attach the AWS-managed login policy to the existing IAM
+user. Run this with an administrative identity, not with
+`cloudkick-developer` unless it already administers its own policies:
+
+In the AWS console, open **IAM → Users → cloudkick-developer → Add
+permissions → Attach policies directly**, select
+`SignInLocalDevelopmentAccess`, and confirm the change. An administrator who
+already has working CLI credentials can instead run:
 
 ```bash
-aws configure sso --profile cloudkick-lab
-aws sso login --profile cloudkick-lab
+aws iam attach-user-policy \
+  --user-name cloudkick-developer \
+  --policy-arn arn:aws:iam::aws:policy/SignInLocalDevelopmentAccess
+```
+
+`SignInLocalDevelopmentAccess` only permits the console-to-CLI login exchange.
+It does not grant permission to deploy CloudKick. The user still needs the
+sandbox deployment permissions described in section 1.
+
+On the development machine, confirm the CLI version and start the browser login:
+
+```bash
+aws --version
+aws login --profile cloudkick-lab
+```
+
+When the browser opens, sign in to the sandbox account as
+`cloudkick-developer`, select that identity, and return to the terminal. If the
+machine cannot open a browser, use:
+
+```bash
+aws login --remote --profile cloudkick-lab
+```
+
+Set the profile and approved deployment Region:
+
+```bash
+aws configure set region eu-west-2 --profile cloudkick-lab
 export AWS_PROFILE=cloudkick-lab
 export AWS_REGION=eu-west-2
 export AWS_DEFAULT_REGION="$AWS_REGION"
 export AWS_PAGER=""
 ```
 
-Use the Region approved for your sandbox. If your organisation supplies a
-different temporary profile, set `AWS_PROFILE` to that profile instead.
+The CLI caches temporary credentials under `~/.aws/login/cache` and refreshes
+them during a session of up to 12 hours. Run `aws login --profile
+cloudkick-lab` again after the session expires.
 
 Verify the active identity before creating anything:
 
@@ -102,6 +143,51 @@ printf 'Sandbox account: %s\n' "$LAB_ACCOUNT_ID"
 
 The account ID printed here must be the account you place in `config.json`.
 Stop if it is a shared or production account.
+
+Also verify that the Python SDK used by `lab.py` can use the profile:
+
+```bash
+python -c 'import boto3; print(boto3.Session().client("sts").get_caller_identity()["Arn"])'
+```
+
+If AWS CLI commands work but Python or Terraform reports missing credentials,
+create a compatibility profile using the CLI as a process credential provider:
+
+```bash
+aws login --profile cloudkick-signin
+aws configure set region eu-west-2 --profile cloudkick-signin
+aws configure set credential_process \
+  'aws configure export-credentials --profile cloudkick-signin --format process' \
+  --profile cloudkick-lab
+aws configure set region eu-west-2 --profile cloudkick-lab
+export AWS_PROFILE=cloudkick-lab
+
+aws sts get-caller-identity
+python -c 'import boto3; print(boto3.Session().client("sts").get_caller_identity()["Arn"])'
+```
+
+When finished, remove the cached login session. Use the first command for the
+direct profile or the second for the compatibility profile:
+
+```bash
+aws logout --profile cloudkick-lab
+aws logout --profile cloudkick-signin
+```
+
+### Fallback: IAM access key
+
+If your organisation has disabled `aws login`, an administrator can permit an
+access key for `cloudkick-developer`. Treat this as the fallback because it is a
+long-lived credential. Create the key in IAM, save the secret once, and configure
+the local profile without putting either value in a command or repository:
+
+```bash
+aws configure --profile cloudkick-lab
+```
+
+Enter the access key ID, secret access key, approved Region and `json` output
+when prompted. Then export `AWS_PROFILE`, verify STS as above, and deactivate or
+delete the access key immediately after cleanup.
 
 ## 5. Select and test a Bedrock model
 
@@ -507,7 +593,10 @@ resources or a shared Wiz connector.
 
 | Symptom | Check |
 | --- | --- |
-| `Unable to locate credentials` | Run `aws sso login --profile cloudkick-lab`, export `AWS_PROFILE`, then repeat `aws sts get-caller-identity`. |
+| `aws: error: argument command: Invalid choice 'login'` | Upgrade AWS CLI v2 to 2.32.0 or newer. Do not substitute a console password into `aws configure`. |
+| `aws login` is denied | Ask an administrator to attach `SignInLocalDevelopmentAccess` to `cloudkick-developer`; also confirm organisation policies permit local-development sign-in. |
+| AWS CLI works but Python or Terraform cannot find credentials | Configure the `credential_process` compatibility profile from section 4 and keep `AWS_PROFILE=cloudkick-lab`. |
+| `Unable to locate credentials` | Run `aws login --profile cloudkick-lab`, export `AWS_PROFILE`, then repeat `aws sts get-caller-identity`. |
 | Account mismatch | Correct `config.json` or switch AWS profiles. Never weaken the account check. |
 | Model `AccessDeniedException` | Confirm model/profile ID, Region, subscription terms, IAM/SCP permissions and organisation data-location rules. |
 | Terraform API Gateway logging error | Confirm the deployer can create/pass the logging role and patch the regional API Gateway account settings. |

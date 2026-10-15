@@ -24,7 +24,7 @@ python lab.py plan --config config.json
 python lab.py deploy --config config.json
 ```
 
-On Windows PowerShell, use `.venv\Scripts\Activate.ps1` and `$env:AWS_PROFILE='cloudkick-lab'`, or run the bash commands in WSL. The SDK uses the same profile as the CLI. Use temporary SSO credentials.
+On Windows PowerShell, use `.venv\Scripts\Activate.ps1` and `$env:AWS_PROFILE='cloudkick-lab'`, or run the bash commands in WSL. The SDK uses the same profile as the CLI. AWS CLI v2.32.0 or newer can use the IAM console user through `aws login`; see the deployment runbook.
 
 The deployment prints the URL. A private `<name>.state.json` stores customer tokens, the context signing secret, output identifiers and a build manifest. Terraform also stores sensitive Lambda environment values in its local workspace state. Do not commit or share either. Open the URL and enter the C-104 token locally. The browser retains it in memory, not persistent storage.
 
