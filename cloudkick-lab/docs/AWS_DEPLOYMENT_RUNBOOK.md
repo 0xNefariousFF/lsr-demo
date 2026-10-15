@@ -214,7 +214,42 @@ AWS documents how to verify profile destinations and SCP compatibility in
 Do not silently replace this ID with the newest model shown in the console. A
 different model changes the scenario behaviour and must be rehearsed again.
 
-### 5.1 Confirm the exact profile is active
+### 5.1 Complete Anthropic first-time use
+
+Anthropic requires one use-case submission per AWS account or organisation
+before the first model invocation. In the Amazon Bedrock console, open **Model
+catalog**, select **Claude Sonnet 4.6**, choose **Submit use case details**, and
+use truthful details for the person or organisation running the lab. CloudKick
+is fictional and must not be entered as the real company.
+
+Recommended form choices for this lab:
+
+- intended users: internal and external;
+- industry: technology, software, or other — cybersecurity education and
+  training, whichever is available;
+- website: the organisation's website or the public project repository;
+- use case: an isolated security-education demonstration of a fictional retail
+  return assistant, using only synthetic order data, to demonstrate normal
+  customer flows, authorised prompt-injection testing, and defender monitoring.
+
+AWS documents this requirement in
+[Access Amazon Bedrock foundation models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html#model-access-sdk-step2).
+After submitting, allow up to 15 minutes for propagation.
+
+Check the underlying model agreement, not the inference-profile ID:
+
+```bash
+aws bedrock get-foundation-model-availability \
+  --region "$AWS_REGION" \
+  --model-id 'anthropic.claude-sonnet-4-6' \
+  --query '{Agreement:agreementAvailability,Authorization:authorizationStatus,Entitlement:entitlementAvailability,Region:regionAvailability}' \
+  --output json
+```
+
+Continue when the agreement is `AVAILABLE`, authorization is `AUTHORIZED`, and
+the entitlement and Region are both `AVAILABLE`.
+
+### 5.2 Confirm the exact profile is active
 
 ```bash
 aws bedrock list-inference-profiles \
@@ -250,7 +285,7 @@ All destination model ARNs must be acceptable under the sandbox's data-location
 and Service Control Policies. If an SCP blocks any destination Region, the whole
 cross-Region invocation can fail.
 
-### 5.2 Run the full Converse tool-use preflight
+### 5.3 Run the full Converse tool-use preflight
 
 The old `READY` prompt proved only text generation. This check exercises the
 contract the demo actually needs: the model must request a tool, accept its
@@ -273,7 +308,7 @@ day of the demo. This proves current access, Converse compatibility and the
 two-turn tool contract; it cannot guarantee that every natural-language answer
 or red-team attempt will be identical.
 
-### 5.3 Resolve access failures without changing the scenario
+### 5.4 Resolve access failures without changing the scenario
 
 - `AccessDeniedException`: confirm that `cloudkick-developer` can list/get
   Bedrock profiles and invoke both the profile and its destination foundation
@@ -306,7 +341,17 @@ aws bedrock get-foundation-model \
 Use this fallback only when the metadata command and all three tool-loop checks
 pass in `eu-west-2`. If neither Sonnet 4.6 option is available, stop and resolve
 account access or agree a different model explicitly; do not deploy an untested
-automatic fallback.
+automatic fallback. If the Anthropic form cannot be submitted, the supported
+in-Region alternative is Amazon Nova Lite:
+
+```bash
+export MODEL_ID='amazon.nova-lite-v1:0'
+./scripts/bedrock_model_preflight.sh 3
+```
+
+Nova Lite does not require the Anthropic form and supports Converse client-side
+tool calling in `eu-west-2`, but it is a less capable model. Rehearse all three
+demo perspectives before presenting if this alternative is used.
 
 ## 6. Determine the presenter source CIDR
 
