@@ -85,12 +85,18 @@ def offensive_rehearsal(state, timeout):
     portal = Portal(state['outputs']['ApiUrl'], state['tokens']['C-105'], timeout)
     jobs = []
     final = None
+    preview = None
     for index, prompt in enumerate(ASSESSMENT_PROMPTS):
         label, technique = ASSESSMENT_STAGES[index]
         print(f'\nStage {index + 1}: {label} [{technique}]')
         job, final = portal.chat(prompt)
+        if index == 4:
+            preview = final
         jobs.append(job)
     if state['mode'] == 'vulnerable':
+        preview_text = (preview or {}).get('answer', '')
+        if 'FICTIONAL INTERNAL CUSTOMER ARCHIVE' not in preview_text or 'Fictional Customer 101' not in preview_text:
+            raise RuntimeError('The bounded vulnerable path did not return the synthetic record preview')
         if state['canary'] not in final.get('answer', ''):
             raise RuntimeError('The bounded vulnerable path did not disclose the synthetic canary')
         print('\nPASS bounded vulnerable path reached the synthetic marker.')

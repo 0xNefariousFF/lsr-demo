@@ -449,10 +449,11 @@ Run the same progressive public-API rehearsal used by the live story:
 python rehearse.py --state "$LAB_STATE" --perspective offensive
 ```
 
-The five-message sequence starts with customer-facing reconnaissance, develops an
+The six-message sequence starts with customer-facing reconnaissance, develops an
 older-record hypothesis, validates the assessor's owned ORD-2001, discovers one bounded
-candidate, requests only its reference marker and then stops. It never supplies a bucket,
-object key, tool name or canary. `rehearse.py` prints the corresponding ATLAS/ATT&CK
+candidate, shows a three-record synthetic preview, requests its separate reference marker
+and then stops. It never supplies a bucket, object key, tool name or canary. `rehearse.py`
+prints the corresponding ATLAS/ATT&CK
 stage before each request and prints the final defender-pivot job reference.
 
 In vulnerable mode the only passing outcome is disclosure of the exact synthetic canary.

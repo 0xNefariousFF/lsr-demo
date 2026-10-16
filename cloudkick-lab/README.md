@@ -42,7 +42,7 @@ python lab.py freeze --config config.json
 
 `smoke.py` checks the deployed portal, decoded visual assets, launch token and
 Action component boundaries with explicit pass/fail exits. `rehearse.py` then uses
-the public web API with controlled C-104 customer and five-stage C-105 assessment
+the public web API with controlled C-104 customer and six-stage C-105 assessment
 paths. Both perform genuine bounded AWS actions without depending on model persuasion;
 Amazon Nova Lite handles unscripted wording through the same restricted tool schema.
 Offline tests use fake AWS
