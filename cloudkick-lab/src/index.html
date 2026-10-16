@@ -69,6 +69,15 @@
     .message-bubble ul,.message-bubble ol{margin:5px 0 5px 20px;padding:0}.message-bubble li{margin:3px 0}
     .message-bubble code{padding:1px 4px;border-radius:3px;background:#dfe8e6;font:13px ui-monospace,SFMono-Regular,Consolas,monospace}
     .message-bubble strong{font-weight:700;color:#0b3035}
+    .activity-card{width:min(73%,680px);border:1px solid #c9d9d5;border-left:3px solid var(--teal);border-radius:6px;background:#f8fbfa;color:var(--ink);overflow:hidden}
+    .activity-card summary{padding:11px 14px;cursor:pointer;font-size:13px;font-weight:700;list-style-position:inside}
+    .activity-list{border-top:1px solid var(--line);padding:2px 14px 11px}
+    .activity-step{padding:10px 0;border-bottom:1px solid var(--line)}.activity-step:last-child{border-bottom:0;padding-bottom:2px}
+    .activity-label{margin:0 0 3px;color:var(--teal);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+    .activity-summary{margin:0;font-size:13px;line-height:1.45;color:#294b4f}
+    .activity-tool{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:7px;font-size:12px;color:var(--muted)}
+    .activity-tool code{padding:2px 5px;border-radius:3px;background:#e2ece9;color:var(--ink);font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
+    .activity-status{color:var(--teal);font-weight:600}
     .quick-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px 44px}
     .quick-action{padding:9px 12px;border:1px solid var(--line-strong);border-radius:4px;background:#fff;color:var(--ink);font-weight:600}
     .quick-action:hover{background:var(--teal-soft);border-color:var(--teal)}
@@ -120,7 +129,7 @@
       .hero{min-height:250px;background-position:68% center}.hero-inner{min-height:250px;padding:30px 18px;background:rgba(248,248,244,.76)}.eyebrow{font-size:11px}h1{font-size:34px;max-width:360px}.hero-copy{font-size:16px;max-width:340px;color:#314b4e}
       .workspace{padding:14px 12px 28px;display:block}.order-card{display:block;margin-bottom:12px;padding:19px}.product-image-wrap{height:150px}
       .product-image{display:block;width:100%;height:150px;object-fit:contain}
-      #chat{height:500px;padding:15px}.assistant-header{padding:14px 15px}.message-bubble{max-width:86%}.quick-actions,.workflow-card{margin-left:0}
+      #chat{height:500px;padding:15px}.assistant-header{padding:14px 15px}.message-bubble,.activity-card{max-width:86%;width:auto}.quick-actions,.workflow-card{margin-left:0}
       .proposal-grid{display:block}.proposal-image{width:100%;height:125px;margin-bottom:12px}.proposal-facts{border-left:0;border-top:1px solid var(--line);padding:10px 0;margin:10px 0}.proposal-grid .primary-button{width:100%}
       .approval-note{align-items:flex-start;flex-direction:column}.review-card{grid-template-columns:62px 1fr}.review-card img{width:62px}.status-pill{grid-column:2;justify-self:start}
       .composer{padding:12px 15px}.composer-row{display:block}#send{width:100%;margin-top:8px}.demo-details{padding:0 12px 28px}.demo-grid{grid-template-columns:1fr}
@@ -259,6 +268,32 @@
       if(who!=='You')row.append(avatar);row.append(bubble);$('chat').append(row);scrollChat();return row;
     }
 
+    function showActivity(activity){
+      if(!Array.isArray(activity)||!activity.length)return;
+      const row=document.createElement('div');row.className='message-row assistant';
+      const avatar=document.createElement('span');avatar.className='message-avatar';avatar.textContent='K';avatar.setAttribute('aria-hidden','true');
+      const details=document.createElement('details');details.className='activity-card';details.open=true;
+      const tools=activity.filter(step=>step&&step.type==='tool').length;
+      const summary=document.createElement('summary');summary.textContent='KickAssist activity · '+activity.length+' '+(activity.length===1?'step':'steps')+(tools?' · '+tools+' '+(tools===1?'tool call':'tool calls'):'');
+      const list=document.createElement('div');list.className='activity-list';
+      for(const step of activity){
+        if(!step||!step.summary)continue;
+        const item=document.createElement('div');item.className='activity-step';
+        const label=document.createElement('p');label.className='activity-label';label.textContent=step.type==='tool'?'Decision summary':'Reasoning summary';
+        const copy=document.createElement('p');copy.className='activity-summary';copy.textContent=step.summary;item.append(label,copy);
+        if(step.type==='tool'&&step.name){
+          const tool=document.createElement('div');tool.className='activity-tool';tool.append('Tool ');
+          const name=document.createElement('code');
+          const args=step.input&&Object.keys(step.input).length?Object.entries(step.input).map(([key,value])=>key+': '+value).join(', '):'';
+          name.textContent=step.name+'('+args+')';tool.append(name);
+          if(step.outcome){const status=document.createElement('span');status.className='activity-status';status.textContent='✓ '+step.outcome;tool.append(status)}
+          item.append(tool);
+        }
+        list.append(item);
+      }
+      details.append(summary,list);row.append(avatar,details);$('chat').append(row);scrollChat();
+    }
+
     function scrollChat(){$('chat').scrollTop=$('chat').scrollHeight}
     function setStatus(text,isError=false){$('status').textContent=text;$('status').classList.toggle('error',isError)}
     function failure(error){setStatus(error.message||'Something went wrong. Please try again.',true)}
@@ -363,7 +398,7 @@
         const queued=await api('chat','POST',{message:prompt,session:sid});
         for(let i=0;i<120;i++){
           await new Promise(resolve=>setTimeout(resolve,2000));const job=await api('jobs/'+queued.job);
-          if(job.status==='complete'){message('KickAssist',job.answer);await hydrateActions(job.actions,job.answer);setStatus('Request reference '+queued.job);return}
+          if(job.status==='complete'){showActivity(job.activity);message('KickAssist',job.answer);await hydrateActions(job.actions,job.answer);setStatus('Request reference '+queued.job);return}
           if(job.status==='error'){message('KickAssist',job.answer||'I could not complete that request.');setStatus('Request reference '+queued.job,true);return}
         }
         throw Error('This request is still running. Start a new conversation or check the presenter logs.');

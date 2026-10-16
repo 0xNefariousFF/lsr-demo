@@ -60,10 +60,12 @@ def handler(event,context):
             job=path.rsplit('/',1)[1]
             item=table.get_item(Key={'pk':'J#'+job,'sk':'STATE'},ConsistentRead=True).get('Item',{})
             if item.get('subject')!=subject:return reply(404,{'error':'not_found'})
-            # Customer never receives internal tool output or trace in this route.
+            # Expose only the worker's curated activity summaries, never raw tool output or model trace.
             result={k:item[k] for k in ('status','answer') if k in item}
             if item.get('ui_actions'):
                 result['actions']=json.loads(item['ui_actions'])
+            if item.get('activity'):
+                result['activity']=json.loads(item['activity'])
             return reply(200,result)
         if method=='GET' and path.startswith('/approvals/'):
             aid=path.rsplit('/',1)[1]
