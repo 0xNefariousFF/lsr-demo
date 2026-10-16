@@ -7,6 +7,6 @@
   "allowed_cidr": "auto",
   "engine": "converse",
   "mode": "vulnerable",
-  "model_id": "eu.anthropic.claude-sonnet-4-6",
+  "model_id": "amazon.nova-lite-v1:0",
   "hours": 8
 }

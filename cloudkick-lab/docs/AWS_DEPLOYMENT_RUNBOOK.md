@@ -191,57 +191,34 @@ delete the access key immediately after cleanup.
 
 ## 5. Select and test the pinned Bedrock model
 
-Use **Anthropic Claude Sonnet 4.6** through its EU geography inference profile:
+Use **Amazon Nova Lite** in `eu-west-2`:
 
 ```bash
-export MODEL_ID='eu.anthropic.claude-sonnet-4-6'
+export MODEL_ID='amazon.nova-lite-v1:0'
 ```
 
-This is the demo's pinned model. It is active, supports Bedrock Converse and
-client-side tool calling, and is available from `eu-west-2`. The EU inference
-profile can route across supported EU Regions, which gives Bedrock more capacity
-to serve the request while keeping inference in the EU geography. Sonnet is a
-better fit than Haiku for the multi-turn policy, refund and red-team stories.
-Sonnet 5.5 is not the default for this demo: it was released recently, enables
-adaptive reasoning by default and adds latency and behaviour changes that the
-scenario does not need.
+Nova Lite is the demo's recommended model. It supports Bedrock Converse and
+client-side tool calling, is less capable and less expensive than the previous
+Sonnet choice, and does not require the Anthropic use-case form. The scripted
+customer and external-assessment paths use controlled orchestration around real
+Actions, so their success does not depend on the model deciding whether to call a
+tool. Nova still handles unscripted customer wording within the same bounded schema.
 
-The identifiers and capabilities above are taken from the current
-[AWS Claude Sonnet 4.6 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-6.html).
-AWS documents how to verify profile destinations and SCP compatibility in
-[Supported Regions and models for inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+Model capability is not a security boundary. The Action handler, server-side
+approval, customer ownership checks, bounded targets and IAM policy remain the
+controls that prevent work outside this demo. See the
+[Amazon Nova models documentation](https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html)
+and [Bedrock Converse tool use](https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-inference-call.html).
 
 Do not silently replace this ID with the newest model shown in the console. A
 different model changes the scenario behaviour and must be rehearsed again.
 
-### 5.1 Complete Anthropic first-time use
-
-Anthropic requires one use-case submission per AWS account or organisation
-before the first model invocation. In the Amazon Bedrock console, open **Model
-catalog**, select **Claude Sonnet 4.6**, choose **Submit use case details**, and
-use truthful details for the person or organisation running the lab. CloudKick
-is fictional and must not be entered as the real company.
-
-Recommended form choices for this lab:
-
-- intended users: internal and external;
-- industry: technology, software, or other — cybersecurity education and
-  training, whichever is available;
-- website: the organisation's website or the public project repository;
-- use case: an isolated security-education demonstration of a fictional retail
-  return assistant, using only synthetic order data, to demonstrate normal
-  customer flows, authorised prompt-injection testing, and defender monitoring.
-
-AWS documents this requirement in
-[Access Amazon Bedrock foundation models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html#model-access-sdk-step2).
-After submitting, allow up to 15 minutes for propagation.
-
-Check the underlying model agreement, not the inference-profile ID:
+### 5.1 Confirm Nova Lite is available
 
 ```bash
 aws bedrock get-foundation-model-availability \
   --region "$AWS_REGION" \
-  --model-id 'anthropic.claude-sonnet-4-6' \
+  --model-id "$MODEL_ID" \
   --query '{Agreement:agreementAvailability,Authorization:authorizationStatus,Entitlement:entitlementAvailability,Region:regionAvailability}' \
   --output json
 ```
@@ -249,43 +226,17 @@ aws bedrock get-foundation-model-availability \
 Continue when the agreement is `AVAILABLE`, authorization is `AUTHORIZED`, and
 the entitlement and Region are both `AVAILABLE`.
 
-### 5.2 Confirm the exact profile is active
+Confirm the model metadata:
 
 ```bash
-aws bedrock list-inference-profiles \
+aws bedrock get-foundation-model \
   --region "$AWS_REGION" \
-  --type-equals SYSTEM_DEFINED \
-  --query "inferenceProfileSummaries[?inferenceProfileId=='${MODEL_ID}'].{Id:inferenceProfileId,Name:inferenceProfileName,Status:status}" \
+  --model-identifier "$MODEL_ID" \
+  --query 'modelDetails.{Id:modelId,Name:modelName,Status:modelLifecycle.status,Input:inputModalities,Output:outputModalities}' \
   --output table
-
-PROFILE_STATUS=$(aws bedrock list-inference-profiles \
-  --region "$AWS_REGION" \
-  --type-equals SYSTEM_DEFINED \
-  --query "inferenceProfileSummaries[?inferenceProfileId=='${MODEL_ID}'].status | [0]" \
-  --output text)
-test "$PROFILE_STATUS" = 'ACTIVE' || {
-  printf 'Expected ACTIVE profile %s; received %s\n' "$MODEL_ID" "$PROFILE_STATUS" >&2
-  exit 1
-}
 ```
 
-Inspect the actual destination model ARNs. This is also the authoritative check
-for data residency and organisation SCP compatibility; do not rely only on the
-`eu.` prefix.
-
-```bash
-aws bedrock get-inference-profile \
-  --region "$AWS_REGION" \
-  --inference-profile-identifier "$MODEL_ID" \
-  --query '{Id:inferenceProfileId,Status:status,DestinationModels:models[].modelArn}' \
-  --output json
-```
-
-All destination model ARNs must be acceptable under the sandbox's data-location
-and Service Control Policies. If an SCP blocks any destination Region, the whole
-cross-Region invocation can fail.
-
-### 5.3 Run the full Converse tool-use preflight
+### 5.2 Run the full Converse tool-use preflight
 
 The old `READY` prompt proved only text generation. This check exercises the
 contract the demo actually needs: the model must request a tool, accept its
@@ -300,7 +251,7 @@ chmod +x scripts/bedrock_model_preflight.sh
 The required result is three `PASS` lines followed by:
 
 ```text
-MODEL PREFLIGHT PASSED: eu.anthropic.claude-sonnet-4-6 in eu-west-2
+MODEL PREFLIGHT PASSED: amazon.nova-lite-v1:0 in eu-west-2
 ```
 
 Do not deploy until this passes. Run it again on the presenter network on the
@@ -308,50 +259,20 @@ day of the demo. This proves current access, Converse compatibility and the
 two-turn tool contract; it cannot guarantee that every natural-language answer
 or red-team attempt will be identical.
 
-### 5.4 Resolve access failures without changing the scenario
+### 5.3 Resolve access failures without changing the scenario
 
-- `AccessDeniedException`: confirm that `cloudkick-developer` can list/get
-  Bedrock profiles and invoke both the profile and its destination foundation
-  models. Also check organisation SCPs for every destination ARN printed above.
+- `AccessDeniedException`: confirm that `cloudkick-developer` can inspect and
+  invoke the Nova Lite foundation model in `eu-west-2`, and check applicable
+  organisation SCPs.
 - marketplace, subscription or model-access error: have the sandbox
-  administrator enable the Anthropic model offer, accept any required terms and
-  allow the account's model-access prerequisites, then repeat the preflight.
-- `ResourceNotFoundException` or an empty profile result: first confirm that
+  administrator enable Amazon Nova Lite and allow the account's model-access
+  prerequisites, then repeat the preflight.
+- `ResourceNotFoundException`: first confirm that
   `AWS_REGION` is `eu-west-2` and that the CLI is using the intended sandbox
   account. Do not infer availability from the model's display name.
-- throttling or quota errors: inspect the account's Bedrock quotas for Sonnet
-  4.6, wait for capacity to recover and rerun all three attempts. Do not treat a
+- throttling or quota errors: inspect the account's Bedrock quotas for Nova Lite,
+  wait for capacity to recover and rerun all three attempts. Do not treat a
   single successful call as the demo readiness gate.
-
-If organisation policy forbids EU cross-Region inference, use the same model's
-in-Region identifier as the first fallback:
-
-```bash
-export MODEL_ID='anthropic.claude-sonnet-4-6'
-
-aws bedrock get-foundation-model \
-  --region "$AWS_REGION" \
-  --model-identifier "$MODEL_ID" \
-  --query 'modelDetails.{Id:modelId,Name:modelName,Status:modelLifecycle.status}' \
-  --output table
-
-./scripts/bedrock_model_preflight.sh 3
-```
-
-Use this fallback only when the metadata command and all three tool-loop checks
-pass in `eu-west-2`. If neither Sonnet 4.6 option is available, stop and resolve
-account access or agree a different model explicitly; do not deploy an untested
-automatic fallback. If the Anthropic form cannot be submitted, the supported
-in-Region alternative is Amazon Nova Lite:
-
-```bash
-export MODEL_ID='amazon.nova-lite-v1:0'
-./scripts/bedrock_model_preflight.sh 3
-```
-
-Nova Lite does not require the Anthropic form and supports Converse client-side
-tool calling in `eu-west-2`, but it is a less capable model. Rehearse all three
-demo perspectives before presenting if this alternative is used.
 
 ## 6. Determine the presenter source CIDR
 
@@ -410,7 +331,7 @@ Region, public CIDR and tested model identifier.
   "allowed_cidr": "auto",
   "engine": "converse",
   "mode": "vulnerable",
-  "model_id": "eu.anthropic.claude-sonnet-4-6",
+  "model_id": "amazon.nova-lite-v1:0",
   "hours": 8
 }
 ```

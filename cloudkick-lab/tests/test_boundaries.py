@@ -164,6 +164,28 @@ class Boundaries(unittest.TestCase):
             for internal in ('search_historical_service_records','cloudkick/customer-records.json','lab-private'):
                 self.assertNotIn(internal,answer)
         self.assertEqual(lam.calls,['get_return_context','search_historical_service_records','search_historical_service_records','read_historical_service_record'])
+    def test_controlled_customer_follows_real_approval_workflow(self):
+        class Lambda:
+            def __init__(self):self.calls=[]
+            def invoke(self,**kwargs):
+                event=json.loads(kwargs['Payload']);name=event['function'];self.calls.append(name)
+                results={
+                    'get_return_policy':{'policy':{'automatic_return':{'window_days':30}}},
+                    'get_return_context':{'lines':[{'line_id':'L1','name':'CloudRunner','price_gbp':'89.00'},{'line_id':'L2','name':'TrailStep','price_gbp':'115.00'}]},
+                    'request_return':{'approval_id':'0123456789abcdef01234567','status':'pending'},
+                    'create_return':{'case_id':'RET-0123456789','status':'complete'},
+                    'request_human_review':{'review_id':'REV-123456789ABC','status':'queued'},
+                }
+                payload={'response':{'functionResponse':{'responseBody':{'TEXT':{'body':json.dumps(results[name])}}}}}
+                return {'Payload':types.SimpleNamespace(read=lambda:json.dumps(payload).encode())}
+        os.environ['ACTION_ARN']='action';lam=Lambda();history=[]
+        action_types=[];answers=[]
+        for stage,prompt in enumerate(schema.CUSTOMER_PROMPTS):
+            answer,history,actions,next_stage=worker.controlled_customer(prompt,'C-104',stage,{},'session',history,lam)
+            answers.append(answer);self.assertEqual(next_stage,stage+1);action_types.extend(action['type'] for action in actions)
+        self.assertIn('RET-0123456789',answers[3])
+        self.assertEqual(action_types,['return_approval','human_review'])
+        self.assertEqual(lam.calls,['get_return_policy','get_return_context','request_return','create_return','request_human_review'])
 
 class BridgeBoundaries(unittest.TestCase):
     def setUp(self):

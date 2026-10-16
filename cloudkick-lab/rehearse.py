@@ -10,13 +10,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
-from schema import ASSESSMENT_PROMPTS, ASSESSMENT_STAGES
-
-CUSTOMER_PROMPTS = (
-    "What is CloudKick's return policy?",
-    'Check my return options for ORD-1001.',
-    'Prepare a return for ORD-1001 line L1.',
-)
+from schema import ASSESSMENT_PROMPTS, ASSESSMENT_STAGES, CUSTOMER_PROMPTS
 
 
 class Portal:
@@ -68,18 +62,18 @@ def customer_rehearsal(state, timeout):
     print('\n=== Perspective 1: intended customer journey ===')
     portal = Portal(state['outputs']['ApiUrl'], state['tokens']['C-104'], timeout)
     jobs = []
-    for prompt in CUSTOMER_PROMPTS:
+    for prompt in CUSTOMER_PROMPTS[:3]:
         job, result = portal.chat(prompt)
         jobs.append(job)
     approval = next((item['id'] for item in result.get('actions', []) if item.get('type') == 'return_approval'), None)
     if not approval:
         raise RuntimeError('The intended flow did not produce a return approval card')
     portal.request('POST', '/approve', {'approval_id': approval})
-    job, completed = portal.chat('I reviewed and approved the return proposal. Create the return now.')
+    job, completed = portal.chat(CUSTOMER_PROMPTS[3])
     jobs.append(job)
     if 'RET-' not in completed.get('answer', ''):
         raise RuntimeError('The intended flow did not produce a stable return case')
-    job, review = portal.chat('Please ask customer care to review the TrailStep in ORD-1001.')
+    job, review = portal.chat(CUSTOMER_PROMPTS[4])
     jobs.append(job)
     if not any(item.get('type') == 'human_review' for item in review.get('actions', [])):
         raise RuntimeError('The intended flow did not produce a human-review card')

@@ -40,6 +40,12 @@ Open the printed **Customer journey** link. Keep **Demo details** collapsed.
    customer-care card and explain that escalation is stored state, not model prose.
 9. Ask for ORD-2001 and show the non-disclosing ownership denial.
 
+For repeatability, the exact scripted C-104 sequence uses controlled orchestration around
+the real policy, order, proposal, approval, return and review Actions. The server still
+enforces customer ownership and approval; free-form wording uses Amazon Nova Lite through
+the same bounded tool schema. This keeps the live workflow deterministic without treating
+the model as the authorization boundary.
+
 Transition: useful agency depends on identity, transaction approval and idempotency.
 Those controls work; the next perspective asks whether every available data path applies
 the same customer boundary.

@@ -2,7 +2,7 @@ import os,json,time
 import boto3
 from botocore.config import Config
 from common import sign_context
-from schema import ASSESSMENT_PROMPTS,ASSESSMENT_STAGES,instructions,converse_tools
+from schema import ASSESSMENT_PROMPTS,ASSESSMENT_STAGES,CUSTOMER_PROMPTS,instructions,converse_tools
 
 table=boto3.resource('dynamodb').Table(os.environ['STATE_TABLE'])
 cfg=Config(read_timeout=180,connect_timeout=10,retries={'max_attempts':1})
@@ -19,6 +19,54 @@ def invoke_action(lam,name,params,attrs,session):
         raise RuntimeError('action_invocation_failed')
     body=payload['response']['functionResponse']['responseBody']['TEXT']['body']
     return json.loads(body)
+
+def controlled_customer(prompt,subject,stage,attrs,session,previous,lam):
+    if subject!='C-104' or not 0<=stage<len(CUSTOMER_PROMPTS) or prompt.strip()!=CUSTOMER_PROMPTS[stage]:
+        return None
+    ui_actions=[];next_stage=stage+1
+    if stage==0:
+        result=invoke_action(lam,'get_return_policy',{},attrs,session)
+        policy=result.get('policy',{});automatic=policy.get('automatic_return',{})
+        answer=(f"CloudKick accepts eligible returns within {automatic.get('window_days',30)} days. "
+                'Defective or unworn items can use the automatic return workflow, but the application '
+                'must record your approval before a return is created. Other items can be sent to '
+                'customer care for review. This demo uses fictional orders and creates no real refund.')
+    elif stage==1:
+        result=invoke_action(lam,'get_return_context',{'order_id':'ORD-1001'},attrs,session)
+        lines={line['line_id']:line for line in result.get('lines',[])}
+        eligible=lines.get('L1',{});review=lines.get('L2',{})
+        answer=(f"ORD-1001 has two return options. {eligible.get('name','CloudRunner')} L1 is eligible for "
+                f"an automatic £{eligible.get('price_gbp','89.00')} return. "
+                f"{review.get('name','TrailStep')} L2 is outside the automatic window and requires "
+                'customer-care review. No return or review has been created yet.')
+    elif stage==2:
+        result=invoke_action(lam,'request_return',{'order_id':'ORD-1001','line_id':'L1'},attrs,session)
+        approval=result.get('approval_id')
+        if not approval:
+            raise RuntimeError('return_proposal_failed')
+        ui_actions.append({'type':'return_approval','id':approval})
+        answer=('The CloudRunner return proposal is ready. Review the £89.00 return and confirm it in '
+                'the application card. KickAssist cannot approve it on your behalf.')
+    elif stage==3:
+        result=invoke_action(lam,'create_return',{'order_id':'ORD-1001','line_id':'L1'},attrs,session)
+        case=result.get('case_id')
+        if not case:
+            next_stage=stage
+            answer=('The return has not been created. Please confirm the pending proposal using the '
+                    'application card, then ask me to create it again.')
+        else:
+            answer=(f'Your simulated return is complete. Case {case} has a prepaid return label. '
+                    'No real payment, refund or carrier request was made.')
+    else:
+        result=invoke_action(lam,'request_human_review',{'order_id':'ORD-1001','line_id':'L2'},attrs,session)
+        review=result.get('review_id')
+        if not review:
+            raise RuntimeError('human_review_failed')
+        ui_actions.append({'type':'human_review','id':review})
+        answer=(f'Customer care review {review} is queued for the TrailStep. This is a persistent, '
+                'simulated review case; no external support ticket was created.')
+    history=previous+[{'role':'user','content':[{'text':prompt}]},{'role':'assistant','content':[{'text':answer}]}]
+    return answer,history,ui_actions,next_stage
 
 def controlled_assessment(prompt,subject,stage,attrs,session,previous,lam):
     if subject!='C-105' or not 0<=stage<len(ASSESSMENT_PROMPTS) or prompt.strip()!=ASSESSMENT_PROMPTS[stage]:
@@ -73,7 +121,7 @@ def converse(prompt,attrs,session,previous):
     ui_actions=[]
     for _ in range(6):
         mode=os.environ['LAB_MODE']
-        r=client.converse(modelId=os.environ['MODEL_ID'],system=[{'text':instructions(mode)}],messages=messages,toolConfig={'tools':converse_tools(mode)},inferenceConfig={'maxTokens':1800,'temperature':0})
+        r=client.converse(modelId=os.environ['MODEL_ID'],system=[{'text':instructions(mode)}],messages=messages,toolConfig={'tools':converse_tools(mode)},inferenceConfig={'maxTokens':800,'temperature':0})
         m=r['output']['message'];messages.append(m)
         uses=[b['toolUse'] for b in m['content'] if 'toolUse' in b]
         if not uses:
@@ -116,23 +164,36 @@ def handler(event,context):
         if len(previous)>30:raise ValueError('conversation_limit_start_new_session')
         attrs=sign_context(r['subject'],event['job'],r['session'],actor_type='customer')
         assessment_stage=int(session.get('assessment_stage',0))
-        controlled=None
+        customer_stage=int(session.get('customer_stage',0))
+        controlled=None;controlled_kind=None
         if os.environ['ENGINE']=='converse':
-            controlled=controlled_assessment(r['prompt'],r['subject'],assessment_stage,attrs,r['session'],previous,boto3.client('lambda',config=cfg))
-        next_assessment_stage=None
+            lam=boto3.client('lambda',config=cfg)
+            controlled=controlled_customer(r['prompt'],r['subject'],customer_stage,attrs,r['session'],previous,lam)
+            if controlled:
+                controlled_kind='customer'
+            else:
+                controlled=controlled_assessment(r['prompt'],r['subject'],assessment_stage,attrs,r['session'],previous,lam)
+                if controlled:controlled_kind='assessment'
+        next_stage=None
         if os.environ['ENGINE']=='classic':
             answer,history,ui_actions=classic(r['prompt'],attrs,r['session'],context)
         elif controlled:
-            answer,history,ui_actions,next_assessment_stage,technique=controlled
-            log('assessment_stage_completed',context,job=event['job'],subject=r['subject'],assessment_stage=assessment_stage+1,technique=technique)
+            if controlled_kind=='customer':
+                answer,history,ui_actions,next_stage=controlled
+                log('customer_stage_completed',context,job=event['job'],subject=r['subject'],customer_stage=next_stage)
+            else:
+                answer,history,ui_actions,next_stage,technique=controlled
+                log('assessment_stage_completed',context,job=event['job'],subject=r['subject'],assessment_stage=next_stage,technique=technique)
         else:
             answer,history,ui_actions=converse(r['prompt'],attrs,r['session'],previous)
         hist=json.dumps(history)
         if len(hist.encode())>180000:raise ValueError('conversation_limit_start_new_session')
-        if next_assessment_stage is None:
+        if next_stage is None:
             table.update_item(Key=skey,UpdateExpression='SET history=:h',ExpressionAttributeValues={':h':hist})
+        elif controlled_kind=='customer':
+            table.update_item(Key=skey,UpdateExpression='SET history=:h, customer_stage=:stage',ExpressionAttributeValues={':h':hist,':stage':next_stage})
         else:
-            table.update_item(Key=skey,UpdateExpression='SET history=:h, assessment_stage=:stage',ExpressionAttributeValues={':h':hist,':stage':next_assessment_stage})
+            table.update_item(Key=skey,UpdateExpression='SET history=:h, assessment_stage=:stage',ExpressionAttributeValues={':h':hist,':stage':next_stage})
         unique_actions=list({(item['type'],item['id']):item for item in ui_actions}.values())
         table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a, ui_actions=:u',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':answer[:24000],':u':json.dumps(unique_actions)})
         log('job_completed',context,job=event['job'],subject=r['subject'],answer_chars=len(answer))

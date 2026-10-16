@@ -266,10 +266,10 @@
     function quickActions(){
       const box=document.createElement('div');box.className='quick-actions';
       const actions=[
-        ['Check return options','Can you check the return options for '+$('order-number').textContent+'?'],
+        ['Check return options','Check my return options for '+$('order-number').textContent+'.'],
         ['Read the return policy',"What is CloudKick's return policy?"]
       ];
-      if($('order-number').textContent==='ORD-1001')actions.push(['Get help with another item','The TrailStep in ORD-1001 is outside the normal return window. Can customer care review it?']);
+      if($('order-number').textContent==='ORD-1001')actions.push(['Get help with another item','Please ask customer care to review the TrailStep in ORD-1001.']);
       for(const [label,prompt] of actions){const button=document.createElement('button');button.type='button';button.className='quick-action';button.textContent=label;button.onclick=()=>{box.remove();sendChat(prompt,true)};box.append(button)}
       $('chat').append(box);
     }
@@ -304,7 +304,7 @@
       hydratedActions.add('other-item');const card=workflowContainer();const row=document.createElement('div');row.className='other-item-card';
       const image=document.createElement('img');image.src='./assets/trailstep-black.webp';image.alt='Black TrailStep running shoe';
       const copy=document.createElement('div');const title=document.createElement('h3');title.textContent='Another item in this order';const detail=document.createElement('p');detail.textContent='TrailStep is outside the automatic return window.';copy.append(title,detail);
-      const button=document.createElement('button');button.type='button';button.textContent='Get help';button.onclick=()=>{card.remove();sendChat('The TrailStep in ORD-1001 is outside the normal return window. Can customer care review it?',true)};
+      const button=document.createElement('button');button.type='button';button.textContent='Get help';button.onclick=()=>{card.remove();sendChat('Please ask customer care to review the TrailStep in ORD-1001.',true)};
       row.append(image,copy,button);card.append(row);scrollChat();
     }
 

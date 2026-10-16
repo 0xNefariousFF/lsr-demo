@@ -42,9 +42,10 @@ python lab.py freeze --config config.json
 
 `smoke.py` checks the deployed portal, decoded visual assets, launch token and
 Action component boundaries with explicit pass/fail exits. `rehearse.py` then uses
-the public web API and the pinned model for the intended story and a five-stage,
-controlled C-105 assessment path for the offensive story. The latter performs genuine
-bounded AWS actions without depending on model persuasion. Offline tests use fake AWS
+the public web API with controlled C-104 customer and five-stage C-105 assessment
+paths. Both perform genuine bounded AWS actions without depending on model persuasion;
+Amazon Nova Lite handles unscripted wording through the same restricted tool schema.
+Offline tests use fake AWS
 clients. No successful AWS deployment
 or Wiz tenant investigation is claimed by the supplied package.
 

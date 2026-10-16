@@ -172,7 +172,7 @@ Unzip the lab package, open a terminal in cloudkick-lab and copy config.example.
   "allowed_cidr": "auto",
   "engine": "converse",
   "mode": "vulnerable",
-  "model_id": "YOUR_SUPPORTED_MODEL_OR_PROFILE_ID",
+  "model_id": "amazon.nova-lite-v1:0",
   "hours": 8
 }
 ```
@@ -195,6 +195,11 @@ PowerShell alternative: activate .venv\Scripts\Activate.ps1 and set $env:AWS_PRO
 The utility refuses an account mismatch and broad IP ranges. It resolves the selected model, generates private Terraform variables, creates or selects a workspace matching the deployment name, validates and applies Terraform, then seeds a fixed policy, two order documents and one private archive. It creates no EC2, NAT gateway or public S3 website.
 
 The private deployment file contains tokens, signing secret, output IDs, canary, model ARNs, commit SHA, code hash and build ID. Terraform local state also contains sensitive Lambda environment values. File permissions are restricted where supported. Keep the deployment file, Terraform state, generated variables and configuration outside source control; restrict filesystem ACLs on Windows. Save dependency and provider lock versions for rehearsal.
+
+The recommended model is `amazon.nova-lite-v1:0` in `eu-west-2`. Exact presenter-script
+messages for C-104 and C-105 are handled by bounded orchestration that invokes genuine
+Actions; Nova Lite handles unscripted wording. Model capability is not a security control:
+identity, approval state, target validation and IAM remain authoritative.
 
 
 # Post deployment and sandbox application
