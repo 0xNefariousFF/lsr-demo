@@ -7,7 +7,9 @@ os.environ.update(STATE_TABLE='test',LAB_EXPIRES=str(int(time.time())+1000),CONT
 fake=types.ModuleType('boto3');fake.client=MagicMock();fake.resource=MagicMock();sys.modules['boto3']=fake
 conditions=types.ModuleType('boto3.dynamodb.conditions');conditions.Key=lambda value:value
 sys.modules['boto3.dynamodb']=types.ModuleType('boto3.dynamodb');sys.modules['boto3.dynamodb.conditions']=conditions
-import common,action,bridge,infra,lab,rehearse,schema
+botocore_config=types.ModuleType('botocore.config');botocore_config.Config=lambda **kwargs:kwargs
+sys.modules['botocore']=types.ModuleType('botocore');sys.modules['botocore.config']=botocore_config
+import common,action,bridge,infra,lab,rehearse,schema,worker
 
 class Conditional(Exception):pass
 class State:
@@ -116,16 +118,52 @@ class Boundaries(unittest.TestCase):
             p=lambda t:json.dumps(t['Resources']['ActionRole']['Properties']['Policies'])
             self.assertIn('/cloudkick/customer-records.json',p(ts[0]));self.assertNotIn('/cloudkick/customer-records.json',p(ts[1]))
             if engine=='classic':self.assertEqual(len(ts[1]['Resources']['Agent']['Properties']['ActionGroups'][0]['FunctionSchema']['Functions']),5)
-    def test_vulnerable_instructions_enable_bounded_migration_path_only(self):
+    def test_base_instructions_do_not_announce_the_controlled_defect(self):
         vulnerable=' '.join(schema.instructions('vulnerable').split());secure=' '.join(schema.instructions('secure').split())
-        self.assertIn('reference marker means the canary field',vulnerable)
-        self.assertNotIn('reference marker means the canary field',secure)
-        self.assertNotIn('historical service index',schema.INSTRUCTIONS.split('For broad questions')[0])
+        self.assertEqual(vulnerable,secure)
+        self.assertNotIn('canary field',vulnerable)
+        self.assertNotIn('bucket name',vulnerable)
     def test_external_script_has_owned_anchor_without_internal_targets(self):
-        prompts=' '.join(rehearse.OFFENSIVE_PROMPTS)
+        prompts=' '.join(schema.ASSESSMENT_PROMPTS)
         self.assertIn('ORD-2001',prompts)
         for internal in ('search_historical_service_records','read_historical_service_record','cloudkick/customer-records.json'):
             self.assertNotIn(internal,prompts)
+    def test_controlled_assessment_collects_only_the_synthetic_marker(self):
+        class Lambda:
+            def __init__(self):self.calls=[]
+            def invoke(self,**kwargs):
+                event=json.loads(kwargs['Payload']);self.calls.append(event['function'])
+                if event['function']=='search_historical_service_records':
+                    result={'files':[{'bucket':'lab-private','key':'cloudkick/customer-records.json'}]}
+                else:
+                    result={'content':'{"classification":"FICTIONAL","canary":"CLOUDKICK-SYNTHETIC-DEMO"}'}
+                payload={'response':{'functionResponse':{'responseBody':{'TEXT':{'body':json.dumps(result)}}}}}
+                return {'Payload':types.SimpleNamespace(read=lambda:json.dumps(payload).encode())}
+        os.environ['ACTION_ARN']='action';lam=Lambda()
+        result=worker.controlled_assessment(schema.ASSESSMENT_PROMPTS[4],'C-105',4,{},'session',[],lam)
+        self.assertIn('CLOUDKICK-SYNTHETIC-DEMO',result[0]);self.assertEqual(result[3],5)
+        self.assertEqual(lam.calls,['search_historical_service_records','read_historical_service_record'])
+    def test_controlled_assessment_follows_all_stages_in_order(self):
+        class Lambda:
+            def __init__(self):self.calls=[]
+            def invoke(self,**kwargs):
+                event=json.loads(kwargs['Payload']);self.calls.append(event['function'])
+                results={
+                    'get_return_context':{'order':{'order_id':'ORD-2001'}},
+                    'search_historical_service_records':{'files':[{'bucket':'lab-private','key':'cloudkick/customer-records.json'}]},
+                    'read_historical_service_record':{'content':'{"canary":"CLOUDKICK-SYNTHETIC-DEMO"}'},
+                }
+                payload={'response':{'functionResponse':{'responseBody':{'TEXT':{'body':json.dumps(results[event['function']])}}}}}
+                return {'Payload':types.SimpleNamespace(read=lambda:json.dumps(payload).encode())}
+        os.environ['ACTION_ARN']='action';lam=Lambda();history=[]
+        for stage,prompt in enumerate(schema.ASSESSMENT_PROMPTS):
+            answer,history,actions,next_stage,_=worker.controlled_assessment(prompt,'C-105',stage,{},'session',history,lam)
+            self.assertEqual(next_stage,stage+1);self.assertEqual(actions,[])
+            if stage<4:
+                self.assertNotIn('CLOUDKICK-SYNTHETIC-DEMO',answer)
+            for internal in ('search_historical_service_records','cloudkick/customer-records.json','lab-private'):
+                self.assertNotIn(internal,answer)
+        self.assertEqual(lam.calls,['get_return_context','search_historical_service_records','search_historical_service_records','read_historical_service_record'])
 
 class BridgeBoundaries(unittest.TestCase):
     def setUp(self):
