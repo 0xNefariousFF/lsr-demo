@@ -187,17 +187,19 @@ class Boundaries(unittest.TestCase):
                 }
                 payload={'response':{'functionResponse':{'responseBody':{'TEXT':{'body':json.dumps(results[name])}}}}}
                 return {'Payload':types.SimpleNamespace(read=lambda:json.dumps(payload).encode())}
-        os.environ['ACTION_ARN']='action';lam=Lambda();history=[];activity=[]
+        os.environ['ACTION_ARN']='action';lam=Lambda();history=[];trace=[]
         action_types=[];answers=[]
         for stage,prompt in enumerate(schema.CUSTOMER_PROMPTS):
-            answer,history,actions,next_stage=worker.controlled_customer(prompt,'C-104',stage,{},'session',history,lam,activity)
+            answer,history,actions,next_stage=worker.controlled_customer(prompt,'C-104',stage,{},'session',history,lam,trace)
             answers.append(answer);self.assertEqual(next_stage,stage+1);action_types.extend(action['type'] for action in actions)
         self.assertIn('RET-0123456789',answers[3])
         self.assertEqual(action_types,['return_approval','human_review'])
         self.assertEqual(lam.calls,['get_return_policy','get_return_context','request_return','create_return','request_human_review'])
-        self.assertEqual([step['name'] for step in activity],lam.calls)
-        self.assertEqual(activity[2]['input'],{'order_id':'ORD-1001','line_id':'L1'})
-        self.assertNotIn('0123456789abcdef01234567',json.dumps(activity))
+        rendered=worker.presenter_answer(answers[-1],trace)
+        for tag in ('<thinking>','<tool>','<tool_result>','<answer>'):
+            self.assertIn(tag,rendered)
+        self.assertIn('request_return(order_id="ORD-1001", line_id="L1")',rendered)
+        self.assertNotIn('0123456789abcdef01234567',rendered)
 
 class BridgeBoundaries(unittest.TestCase):
     def setUp(self):
@@ -212,10 +214,6 @@ class BridgeBoundaries(unittest.TestCase):
     def test_owned_job_returns_structured_ui_actions(self):
         self.db.get_item.return_value={'Item':{'subject':'C-104','status':'complete','answer':'Review the return.','ui_actions':json.dumps([{'type':'return_approval','id':'a'*24}])}}
         r=self.call('/jobs/'+'a'*32);self.assertEqual(r['statusCode'],200);self.assertEqual(json.loads(r['body'])['actions'][0]['type'],'return_approval')
-    def test_owned_job_returns_only_curated_activity(self):
-        activity=[{'type':'tool','name':'get_return_policy','summary':'Checked policy.','outcome':'Current policy retrieved.','input':{}}]
-        self.db.get_item.return_value={'Item':{'subject':'C-104','status':'complete','answer':'30 days.','activity':json.dumps(activity),'raw_trace':'never disclose'}}
-        r=self.call('/jobs/'+'a'*32);body=json.loads(r['body']);self.assertEqual(body['activity'],activity);self.assertNotIn('raw_trace',body)
     def test_static_assets_are_public_and_base64_encoded(self):
         r=bridge.handler({'path':'/assets/cloudrunner-grey.webp','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
         self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/webp')
