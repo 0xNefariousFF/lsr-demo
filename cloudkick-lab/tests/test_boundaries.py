@@ -1,5 +1,5 @@
 """Offline boundary tests. AWS calls are fakes, never proof of a deployed lab."""
-import sys,os,json,time,copy,unittest,types,hashlib
+import sys,os,json,time,copy,unittest,types,hashlib,base64
 from pathlib import Path
 from unittest.mock import MagicMock,patch
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]),str(Path(__file__).resolve().parents[1]/'src')]
@@ -143,6 +143,11 @@ class BridgeBoundaries(unittest.TestCase):
     def test_static_assets_are_public_and_base64_encoded(self):
         r=bridge.handler({'path':'/assets/cloudrunner-grey.webp','httpMethod':'GET'},types.SimpleNamespace(aws_request_id='request-1'))
         self.assertEqual(r['statusCode'],200);self.assertTrue(r['isBase64Encoded']);self.assertEqual(r['headers']['Content-Type'],'image/webp')
+    def test_api_gateway_binary_json_request_is_decoded(self):
+        body=base64.b64encode(json.dumps({'message':'Check my return','session':'session-123'}).encode()).decode()
+        event={'path':'/chat','httpMethod':'POST','headers':{'Authorization':'Bearer '+self.token},'body':body,'isBase64Encoded':True}
+        r=bridge.handler(event,types.SimpleNamespace(aws_request_id='request-1'))
+        self.assertEqual(r['statusCode'],202);self.db.put_item.assert_called_once();bridge.lam.invoke.assert_called_once()
     def test_shared_lambda_source_stays_lean(self):
         source=Path(__file__).resolve().parents[1]/'src'
         size=sum(path.stat().st_size for path in source.rglob('*') if path.is_file() and '__pycache__' not in path.parts)

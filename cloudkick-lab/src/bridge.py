@@ -38,7 +38,13 @@ def handler(event,context):
     subject=json.loads(os.environ['TOKEN_HASHES']).get(hashlib.sha256(token.encode()).hexdigest())
     if not subject:return reply(401,{'error':'invalid_session'})
     try:
-        body=json.loads(event.get('body') or '{}')
+        raw_body=event.get('body') or '{}'
+        if event.get('isBase64Encoded'):
+            try:
+                raw_body=base64.b64decode(raw_body,validate=True).decode('utf-8')
+            except Exception as ex:
+                raise ValueError('invalid_base64_body') from ex
+        body=json.loads(raw_body)
         if not isinstance(body,dict):raise ValueError('invalid_body')
         if method=='GET' and path=='/me':return reply(200,{'customer':subject,'engine':os.environ['ENGINE'],'mode':os.environ['LAB_MODE'],'build_sha':BUILD_SHA})
         if method=='POST' and path=='/chat':
