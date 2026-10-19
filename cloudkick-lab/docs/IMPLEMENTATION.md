@@ -11,7 +11,7 @@ Learn & Share Remix  |  Miguel Lopez  |  11 October 2026
 
 Use a tailored CloudKick lab for the 60-minute session. It gives an ordinary customer useful return capabilities, then shows how a legacy diagnostic function can use its workload identity beyond that customer’s entitlement. The S3 archive stays private throughout. Its records and every return transaction are fictional.
 
-The current repository includes a Terraform deployment, a customer web application, bounded Converse orchestration, synthetic fixtures, evidence export and a secure configuration. The Classic adapter remains compatibility code only. The editable presentation, final diagrams and validated evidence package are later-phase deliverables and are not yet included.
+The current repository includes a Terraform deployment, a customer web application, bounded Converse orchestration, an optional native Bedrock Agents Classic graph profile, synthetic fixtures, evidence export and a secure configuration. The editable presentation, final diagrams and validated evidence package are later-phase deliverables and are not yet included.
 
 Amazon Bedrock Agents Classic closed to new customers on 30 July 2026. An eligible account can use the requested managed-agent implementation. The included alternative is a custom agent using the Bedrock Converse API. AWS recommends AgentCore as the migration destination, but this package does not claim to implement AgentCore. [R1, R2]
 
@@ -52,7 +52,7 @@ The legitimate workflow retrieves owned order data, evaluates items, stores a pr
 
 ## Assessment boundary
 
-The external assessor receives only the workshop URL and a customer token. They do not receive AWS credentials, architecture, code or S3 names. Resource identifiers must come from application responses. The presenter’s operator access is separate and supports the later investigation. A narrow source-IP rule, token authentication and an exact one-object allowlist contain the exercise.
+The external assessor receives only the workshop URL and a customer token. They do not receive AWS credentials, architecture, code or S3 names. Resource identifiers must come from application responses. The presenter’s operator access is separate and supports the later investigation. A narrow source-IP rule, token authentication, an isolated synthetic-data bucket and an exact-object check in the handler contain the exercise.
 
 
 # Target AWS architecture
@@ -81,19 +81,19 @@ API requests return quickly and the browser polls for completion. Worker can run
 | Application to agent | Worker signs subject, session, job and expiry. Customer input cannot set these fields. |
 | Agent to action | Classic uses a Lambda resource policy limited to the account and agent ARN. Converse Worker invokes only Action. |
 | Tool to business operation | Action checks order ownership and eligibility, then requires stored approval for a return. |
-| Workload to data | IAM scopes S3 reads and state access. The vulnerable role includes one unnecessary archive grant. |
+| Workload to data | IAM scopes S3 reads and state access. The vulnerable AI execution role includes unnecessary whole-bucket archive grants. |
 
 ## The identity chain
 
-The Classic Bedrock service role invokes the selected model. It is separate from the Action Lambda execution role that reads S3. Bridge cannot read S3. In Converse mode Worker invokes both the model and Action, and no Classic agent resource exists. These are different architectures with the same application trust lesson. [R2, R6, R7]
+In vulnerable mode Bridge, Worker and the `*-agent-tools` Lambda deliberately use the same AI execution role. In Converse that role invokes the selected model and tool Lambda directly. The optional Classic profile adds a real Bedrock Agent, prepared alias, action group and Lambda executor relationship; Worker invokes the alias and the agent action group invokes `*-agent-tools`. In both profiles the tool runs under the shared role with effective read/list access to the private bucket. This is intentionally coarse identity design so a cloud graph can connect the AI workload to its tools and data target using native AWS relationships. In secure mode the three Lambda workloads use separate roles and the private grants are absent. [R2, R6, R7]
 
 Customer identity is application context, not IAM impersonation. HMAC verification binds that context to a session and expiry. It protects against client tampering, but it does not decide whether a customer should access a particular business object. That second decision belongs in the action handler.
 
 ## IAM scope
 
-Action normally reads only the orders prefix and the state table. Vulnerable mode adds GetObject for exactly cloudkick/customer-records.json and ListBucket for the cloudkick prefix in the private bucket. No ListAllMyBuckets, account-wide S3 read or credential-return tool exists. Least privilege is relative to business purpose, so even this exact object grant is excessive.
+The agent-tool function normally reads only the orders prefix and the state table. Vulnerable mode attaches its policy to the shared AI execution role and adds `GetObject` for every object plus `ListBucket` for the one private lab bucket; the handler still accepts only `cloudkick/customer-records.json`. No `ListAllMyBuckets`, cross-account S3 read, write permission or credential-return tool exists. The IAM grant is deliberately broader than the code path so Wiz can display a clear over-permissive identity-to-data relationship without making the bucket public.
 
-All S3 buckets use server-side encryption and Block Public Access. Business data buckets enforce HTTPS through an explicit deny. Bedrock service trust includes SourceAccount and an account-scoped agent ARN condition, while Action’s invocation policy uses the exact agent ARN. Effective access can also be constrained by SCPs, RCPs, resource policies and permissions boundaries. [R7, R8]
+All S3 buckets use server-side encryption and Block Public Access. Business data buckets enforce HTTPS through an explicit deny. In the Classic profile, Bedrock service trust includes `SourceAccount` and an account-scoped agent ARN condition, while the agent-tool Lambda permission uses the exact agent ARN. Effective access can also be constrained by SCPs, RCPs, resource policies and permissions boundaries. [R7, R8]
 
 ## Application state
 
@@ -120,7 +120,7 @@ Decision: implement a tailored lab and use CloudGoat as a design reference. No C
 | infra.py | Legacy CloudFormation generator used by compatibility tests only |
 | lab.py | Account/model verification, Terraform lifecycle, seed, evidence, reset and cleanup |
 | src/bridge.py | Customer API, independent approval and review-status endpoints |
-| src/worker.py | Bounded Converse orchestration; Classic retained only as an adapter |
+| src/worker.py | Bounded Converse orchestration and native Bedrock Agent invocation adapter |
 | src/action.py | Business checks and the controlled diagnostic weakness |
 | src/common.py and schema.py | Signed context and matching tool definitions |
 | src/index.html | Customer application served by Bridge |
@@ -155,7 +155,12 @@ The deployer resolves either a foundation-model ARN or an inference profile and 
 
 ## Engine choice
 
-Set engine to converse for the authoritative demo. The app displays which engine is running. Do not relabel the custom Converse loop as AgentCore or managed Agents Classic. The Classic adapter is optional legacy compatibility code and is not required for the session.
+Use `engine: converse` for the repeatable customer and assessment script. Use
+`engine: classic` when the Defender story requires a native Bedrock Agent and the
+account remains eligible for Agents Classic. The Classic profile deploys the Agent,
+prepared alias and function-schema action group through Terraform; it is model-driven,
+so rehearse every customer step. The app displays the active engine. Do not relabel
+Converse as a managed agent or either profile as AgentCore.
 
 
 # Deployment configuration and commands
@@ -293,7 +298,7 @@ are part of this lab.
 
 ## Methodology mapping
 
-Use MITRE ATLAS discovery, prompt-crafting, AI-service and agent-tool-invocation concepts as a teaching map. Use ATT&CK T1619 and T1530 as cloud-operation analogues for the Action role's actual `ListObjectsV2` and `GetObject` calls. Tool misuse and identity or privilege abuse align to the OWASP Agentic Top 10. This is a selected connected path, not every phase of a classic cyber kill chain. It demonstrates excessive agency and a confused-deputy authorization defect; it is not prompt injection because this path does not cross an instruction boundary. [R4, R11]
+Use MITRE ATLAS discovery, prompt-crafting, AI-service and agent-tool-invocation concepts as a teaching map. Use ATT&CK T1619 and T1530 as cloud-operation analogues for the agent-tool function's actual `ListObjectsV2` and `GetObject` calls under the shared AI execution role. Tool misuse and identity or privilege abuse align to the OWASP Agentic Top 10. This is a selected connected path, not every phase of a classic cyber kill chain. It demonstrates excessive agency and a confused-deputy authorization defect; it is not prompt injection because this path does not cross an instruction boundary. [R4, R11]
 
 ## Failure and stop conditions
 
@@ -319,7 +324,7 @@ The exporter writes the job, Action tool records and configuration manifest, the
 
 ## The exact join
 
-Action records ResponseMetadata.RequestId from the S3 SDK response. Match it to CloudTrail requestID. Confirm eventSource is s3.amazonaws.com, eventName is GetObject, the object key is cloudkick/customer-records.json and userIdentity.sessionContext.sessionIssuer identifies the Action role. Confirm the event has no failure code. Then match the Action job to the final answer and the manifest’s canary. [R12, R13]
+Action records `ResponseMetadata.RequestId` from the S3 SDK response. Match it to CloudTrail `requestID`. Confirm `eventSource` is `s3.amazonaws.com`, `eventName` is `GetObject`, the object key is `cloudkick/customer-records.json` and `userIdentity.sessionContext.sessionIssuer` identifies the Worker/AI execution role in vulnerable mode. Confirm the event has no failure code. Then match the Action job to the final answer and the manifest’s canary. [R12, R13]
 
 ```text
 fields @timestamp, job, tool, outcome, s3_request_id
@@ -335,15 +340,15 @@ Preserve timestamps, manifests and raw events with the recorded run. A graph scr
 
 # Wiz integration and visibility prerequisites
 
-Use the tenant’s current AWS onboarding workflow and generated connector template. Select the dedicated lab account and required regions. Deploy it with the authorised connector administrator role, including the ExternalId and trust conditions generated by Wiz. Do not substitute a hand-written connector role or grant the lab Action role access to Wiz.
+Use the tenant’s current AWS onboarding workflow and generated connector template. Select the dedicated lab account and required regions. Deploy it with the authorised connector administrator role, including the ExternalId and trust conditions generated by Wiz. Do not substitute a hand-written connector role or grant the lab execution roles access to Wiz.
 
 | Capability | Prerequisite and rehearsal gate |
 | --- | --- |
 | Cloud inventory | Healthy AWS connector, lab region included, correct project scope and completed inventory scan |
-| Identity and access analysis | Connector permissions for IAM and relevant resource policies. Verify the Action role and private bucket relationship. |
+| Identity and access analysis | Connector permissions for IAM and relevant resource policies. In vulnerable mode verify the Worker/AI execution role is attached to all three Lambdas and has effective access to the private bucket. Filter `DemoPath=CloudKickAgentKillChain` or the `AIComponent` and `KillChainStage` tags to keep the intended resources together. |
 | API exposure analysis | API resource visible. Check the source-IP policy and distinguish restricted reach from unrestricted public access. |
 | AI context | Supported AI assets and current AI-SPM coverage. Verify whether the actual Classic agent and alias are represented. |
-| Data classification | DSPM enabled and configured if used. Fictional records may not match a classifier. |
+| Data classification | DSPM enabled and configured if used. The seeded archive contains reserved-domain email addresses, reserved UK drama telephone numbers and classification hints, but a finding still depends on tenant DSPM coverage and scan completion. Resource and object tags are navigation aids, not proof of sensitive-data discovery. |
 | Runtime investigation | Wiz Defend entitlement plus configured cloud event ingestion, including the required S3 data events if supported in the tenant |
 | Red Agent | ASM/Red access, supported target and authentication, approved scope and confirmed scanner source connectivity |
 | Blue Agent | An actual supported Threat and sufficient ingested telemetry, with Blue investigation available |
@@ -354,7 +359,7 @@ Onboarding the cloud account for configuration analysis does not automatically p
 
 ## Expected and conditional findings
 
-Expect to investigate the provisioned Lambda, role and S3 resources when supported and scanned. Do not promise a built-in Issue with a particular name, a complete agent-to-tool graph edge, a sensitivity classification or a Blue verdict. The exact-object grant is deliberately narrow and may not match a broad-permission rule. A saved query and manual evidence join remain valid teaching tools.
+Expect to investigate the provisioned Lambda, role and S3 resources when supported and scanned. The vulnerable profile uses one native IAM principal for the API entry Lambda, Bedrock worker, agent-tool Lambda and whole-bucket read/list grant, eliminating the previous identity break in the graph. Do not promise a built-in Issue with a particular name, severity, sensitivity classification or Blue verdict. A saved graph view and runtime evidence join remain valid teaching tools even when tenant policy does not promote the path to an Issue.
 
 
 # Defender live demonstration runbook
@@ -364,16 +369,16 @@ Slides 18 to 20. Time budget: eight minutes live and one minute recap. Pre-open 
 | Time | Investigation action | Evidence and presenter cue |
 | --- | --- | --- |
 | 0–1 min | Filter inventory to the account and Project=CloudKick | Confirm stack ownership, region and scan freshness. |
-| 1–2 min | Open Action Lambda and its execution role | Identify the principal that made the read. Do not attribute S3 access to the model role. |
-| 2–4 min | Inspect role access to the private bucket/object | Compare the grant with the returns purpose and review other policy constraints. |
-| 4–5 min | Inspect the entry point and reconstruct missing application edges | API source-IP restriction limits reach. Use app architecture and Action records for unmodelled edges. |
+| 1–2 min | Open the Worker/AI execution role | Show that the same principal executes Bridge, Worker and `*-agent-tools`. |
+| 2–4 min | Expand its policies and effective access | Connect Bedrock invocation, agent-tool invocation and whole private-bucket read/list permission. |
+| 4–5 min | Open the tool Lambda and private datastore | Compare returns purpose with archive access; API source-IP restriction still limits reach. |
 | 5–6 min | Open a real Issue, if present, or the saved investigation | Explain reachability, preconditions, data scope and confidence. A missing Issue does not remove the app defect. |
 | 6–7 min | Join the runtime evidence | Match S3 requestID, role, object and customer job. Use Defend only where the actual event is available. |
 | 7–8 min | Assign containment and repair | Application owner removes capability; cloud owner removes the unnecessary grant; security validates the replay. |
 
 ## Prioritisation
 
-Explain the connected risk as reachable customer input, an exposed diagnostic capability, missing business authorisation and a permitted private-object read. The lab’s source-IP restriction and one-object allowlist reduce likelihood and impact. In a real service, evaluate the actual customer population, authentication strength, record sensitivity, permission scope and possible write operations. Do not transfer the lab’s bounded impact directly to an enterprise severity score.
+Explain the connected risk as reachable customer input, an exposed diagnostic capability, missing business authorisation, a shared over-privileged AI identity and a permitted private-object read. The lab’s source-IP restriction, isolated synthetic bucket and exact-object handler check reduce likelihood and impact. In a real service, evaluate the actual customer population, authentication strength, record sensitivity, permission scope and possible write operations. Do not transfer the lab’s bounded impact directly to an enterprise severity score.
 
 ## Recap
 
@@ -400,9 +405,9 @@ If no relevant finding occurs, explain the supported capability conceptually. Ne
 
 Wiz documents Blue Agent as part of the Defend experience for investigating triggered threats using cloud telemetry, runtime signals and environment context. It is not a generic promise to investigate every IAM posture observation. [R16]
 
-Verify the relevant S3 event is ingested and attributed to the Action role. If data-event ingestion is unavailable, use the AWS export for the manual investigation.
+Verify the relevant S3 event is ingested and attributed to the Worker/AI execution role. If data-event ingestion is unavailable, use the AWS export for the manual investigation.
 
-If supported in the tenant, configure a scoped detection for the Action role reading the exact synthetic archive. Label it as a custom workshop detection, not a built-in product finding.
+If supported in the tenant, configure a scoped detection for the AI execution role reading the exact synthetic archive. Label it as a custom workshop detection, not a built-in product finding.
 
 When an actual Threat exists, open its Blue investigation. Compare the evidence, scope and conclusion with the exported job and S3 event.
 
@@ -410,7 +415,7 @@ Correct any unsupported conclusion. The analyst remains responsible for the verd
 
 ## A suitable detection hypothesis
 
-Trigger on successful GetObject by the CloudKick Action role against the private archive. Correlate it with the diagnostic tool and customer job. Keep denied attempts separate. A single bounded lab event can be enough for a custom teaching rule, while a production rule needs normal-use context, exclusions, ownership and review. No unverified Wiz query syntax is supplied.
+Trigger on successful `GetObject` by the CloudKick Worker/AI execution role against the private archive. Correlate it with the diagnostic tool and customer job. Keep denied attempts separate. A single bounded lab event can be enough for a custom teaching rule, while a production rule needs normal-use context, exclusions, ownership and review. No unverified Wiz query syntax is supplied.
 
 
 # Containment and remediated configuration
@@ -425,7 +430,8 @@ python lab.py freeze --config config.json
 | --- | --- | --- |
 | Tool schema | Business and diagnostic functions | Business functions only |
 | Action executor | Diagnostic branch lacks customer entitlement | Diagnostic names rejected before an S3 call |
-| IAM scope | Private object read and prefix listing | Private grants absent |
+| Workload identities | One shared AI execution role | Separate Bridge, Worker and agent-tool roles |
+| IAM scope | Whole isolated private-bucket read and listing | Private grants absent |
 | Business controls | Ownership, eligibility and app approval | Retained |
 | S3 public access | Blocked | Blocked |
 
@@ -448,7 +454,7 @@ Replace workshop tokens with federated customer authentication, use managed secr
 
 | Test | Expected result | Evidence |
 | --- | --- | --- |
-| Offline test suite | 23 passing tests | Unit-test output, with fake AWS clients clearly labelled |
+| Offline test suite | All tests passing | Unit-test output, with fake AWS clients clearly labelled |
 | Owned and foreign orders | Owned details, foreign order denied | Browser response and Action record |
 | Approval bypass attempt | Chat “approved” cannot complete a pending proposal | Handler denial and unchanged state |
 | Approved return and retry | One stable case ID | Completed proposal record |
@@ -461,7 +467,7 @@ Replace workshop tokens with federated customer authentication, use managed secr
 
 ## Runtime authority check
 
-After secure deployment, inspect the Action role’s inline policy. Optionally run IAM policy simulation with the exact role and object ARN. An implicit deny is useful supporting evidence, but policy simulation is not a complete execution proof for every resource policy, SCP, RCP and service condition. The secure handler stops before S3; therefore its rejection alone does not independently prove IAM denial. [R7]
+After secure deployment, inspect the agent-tool role’s inline policy. Optionally run IAM policy simulation with the exact role and object ARN. An implicit deny is useful supporting evidence, but policy simulation is not a complete execution proof for every resource policy, SCP, RCP and service condition. The secure handler stops before S3; therefore its rejection alone does not independently prove IAM denial. [R7]
 
 ```text
 aws iam get-role-policy \
@@ -520,7 +526,7 @@ The lab checks the expected account, restricts endpoint source IP, authenticates
 
 Export evidence needed for the session and record the final configuration.
 
-Run cleanup for the vulnerable deployment and any secure twin. The command destroys the exact named Terraform workspace, including its three S3 buckets, and then removes the local deployment secret file. Export evidence first because the audit bucket is also removed. If two twins are live, remove the older twin first because API Gateway's CloudWatch role setting is regional and account-wide.
+Run cleanup for the vulnerable deployment and any secure twin. The command destroys the exact named Terraform workspace, including its four S3 buckets, and then removes the local deployment secret file. Export evidence first because the audit bucket is also removed. If two twins are live, remove the older twin first because API Gateway's CloudWatch role setting is regional and account-wide.
 
 Verify the functions, API, roles, queue, state table, log groups, trail and buckets are absent. Inspect Terraform and CloudTrail errors if anything remains.
 
@@ -595,7 +601,7 @@ If behind, shorten the architecture explanation and optional Red/Blue discussion
 | --- | --- |
 | Agent | A model-driven workflow that can select tools and use their results. |
 | Tool invocation | A structured request to application code, such as get_return_context. Model intent still needs validation. |
-| Workload identity | The AWS principal used by the running service. S3 sees the Action execution role. |
+| Workload identity | The AWS principal used by the running service. In vulnerable mode S3 sees the Worker/AI execution role; secure mode uses a separate agent-tool role. |
 | Least privilege | Grant only authority required for the service’s purpose. The returns role does not need the private archive. |
 | Trust boundary | A point where input or authority changes trust level. Customer text crossing into an action needs an independent decision. |
 | Confused deputy | A privileged component uses its authority for an unauthorised caller purpose. The diagnostic tool reads internal records for a customer. |

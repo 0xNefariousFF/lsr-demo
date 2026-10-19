@@ -48,6 +48,17 @@ variable "mode" {
   }
 }
 
+variable "engine" {
+  description = "Bedrock Converse adapter or native Bedrock Agent runtime."
+  type        = string
+  default     = "converse"
+
+  validation {
+    condition     = contains(["converse", "classic"], var.engine)
+    error_message = "engine must be converse or classic."
+  }
+}
+
 variable "model_id" {
   description = "Bedrock foundation model ID or inference profile ID used by Converse."
   type        = string
@@ -56,6 +67,26 @@ variable "model_id" {
 variable "model_invoke_arns" {
   description = "Exact model and inference profile ARNs required by the selected model ID."
   type        = list(string)
+}
+
+variable "agent_instruction" {
+  description = "System instruction used by the native Bedrock Agent profile."
+  type        = string
+  default     = "CloudKick returns assistant."
+}
+
+variable "agent_functions" {
+  description = "Function schema exposed by the native Bedrock Agent action group."
+  type = list(object({
+    name        = string
+    description = string
+    parameters = map(object({
+      description = string
+      type        = string
+      required    = bool
+    }))
+  }))
+  default = []
 }
 
 variable "expires_epoch" {

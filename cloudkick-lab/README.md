@@ -7,7 +7,11 @@ This package implements a fictional customer-return agent and a deliberately bou
 1. Read `docs/IMPLEMENTATION.md`. Select an isolated AWS account and supported model. Install Terraform 1.5 or newer and Python 3.12.
    Follow `docs/AWS_DEPLOYMENT_RUNBOOK.md` for the complete AWS CLI, deployment,
    validation and teardown sequence.
-2. Use `engine=converse`. This is the authoritative demo path and implements a custom agent using the Amazon Bedrock Converse API. It is not Agents Classic or AgentCore. The Classic adapter is retained temporarily for compatibility testing only.
+2. Choose the engine for the story you need. `engine=converse` is the repeatable
+   customer-demo path and implements a custom agent with the Bedrock Converse API.
+   `engine=classic` deploys a real Amazon Bedrock Agent, alias and function-schema
+   action group for the strongest Wiz agent/tool graph, but only in an account and
+   Region still eligible for Agents Classic. Neither profile is AgentCore.
 3. Copy `config.example.json` to `config.json` and replace all values marked `REPLACE`.
    Keep `allowed_cidr` set to `auto` to detect the deployment machine's current
    public IPv4 address on every plan or deploy. A fixed `/24` through `/32` remains
@@ -41,10 +45,11 @@ python lab.py freeze --config config.json
 ```
 
 `smoke.py` checks the deployed portal, decoded visual assets, launch token and
-Action component boundaries with explicit pass/fail exits. `rehearse.py` then uses
-the public web API with controlled C-104 customer and six-stage C-105 assessment
-paths. Both perform genuine bounded AWS actions without depending on model persuasion;
-Amazon Nova Lite handles unscripted wording through the same restricted tool schema.
+Action component boundaries with explicit pass/fail exits. With `engine=converse`,
+`rehearse.py` uses the public web API with controlled C-104 customer and six-stage
+C-105 assessment paths. The native Agent profile uses the same application and tools,
+but its orchestration is model-driven and must be rehearsed in the selected account.
+Both profiles perform genuine bounded AWS actions.
 Offline tests use fake AWS
 clients. No successful AWS deployment
 or Wiz tenant investigation is claimed by the supplied package.
@@ -63,7 +68,7 @@ For a time-limited presentation, predeploy a second stack named `cloudkick-fixed
 
 ## Remove the lab
 
-Export any evidence first. The cleanup operation runs Terraform destroy in the named workspace, including the three explicitly named lab buckets. It does not enumerate arbitrary account buckets.
+Export any evidence first. The cleanup operation runs Terraform destroy in the named workspace, including the four explicitly named lab buckets. It does not enumerate arbitrary account buckets.
 
 ```bash
 python lab.py cleanup --config config.json

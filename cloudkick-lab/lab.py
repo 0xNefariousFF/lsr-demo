@@ -49,8 +49,8 @@ def load_config(path):
         raise ValueError('Use a dedicated isolated lab account and set is_isolated_lab=true.')
     if not re.fullmatch(r'cloudkick-[a-z0-9-]{1,16}', c['name']):
         raise ValueError('name must start cloudkick- and be at most 26 characters')
-    if c.get('engine') != 'converse':
-        raise ValueError('Phase 2 supports engine=converse only; Classic is not a deployment path.')
+    if c.get('engine') not in ('converse', 'classic'):
+        raise ValueError('engine must be converse or classic')
     if c['mode'] not in ('vulnerable', 'secure'):
         raise ValueError('mode must be vulnerable or secure')
     if not re.fullmatch(r'\d{12}', c['account']):
@@ -115,13 +115,23 @@ def secure_terraform_state(c):
 def resolve_model(session, c):
     from botocore.exceptions import ClientError
     bedrock = session.client('bedrock')
-    runtime = session.client('bedrock-runtime')
-    if not hasattr(runtime, 'converse'):
-        raise RuntimeError('The installed boto3 does not expose Bedrock Converse. Upgrade requirements.')
+    if c['engine'] == 'converse':
+        runtime = session.client('bedrock-runtime')
+        if not hasattr(runtime, 'converse'):
+            raise RuntimeError('The installed boto3 does not expose Bedrock Converse. Upgrade requirements.')
+    else:
+        runtime = session.client('bedrock-agent-runtime')
+        if not hasattr(runtime, 'invoke_agent'):
+            raise RuntimeError('The installed boto3 does not expose Bedrock Agent Runtime. Upgrade requirements.')
     try:
         model = bedrock.get_foundation_model(modelIdentifier=c['model_id'])['modelDetails']
         return [model['modelArn']]
-    except ClientError:
+    except ClientError as ex:
+        if c['engine'] == 'classic':
+            raise ValueError(
+                'engine=classic requires a foundation model ID supported by Bedrock Agents; '
+                'an inference profile ID cannot be used as the agent foundation_model.'
+            ) from ex
         profile = bedrock.get_inference_profile(inferenceProfileIdentifier=c['model_id'])
         return [profile['inferenceProfileArn']] + [model['modelArn'] for model in profile['models']]
 
@@ -154,12 +164,28 @@ def initialise_state(c, existing=None):
     state.setdefault('context_secret', secrets.token_urlsafe(48))
     state.setdefault('tokens', {customer: secrets.token_urlsafe(32) for customer in ('C-104', 'C-105')})
     state.setdefault('canary', 'CLOUDKICK-SYNTHETIC-' + secrets.token_hex(8).upper())
-    state['engine'] = 'converse'
+    state['engine'] = c['engine']
     state['mode'] = c['mode']
     return state
 
 
 def write_tfvars(c, state):
+    from src.schema import classic_functions, instructions
+
+    agent_functions = []
+    for function in classic_functions(c['mode']):
+        agent_functions.append({
+            'name': function['Name'],
+            'description': function['Description'],
+            'parameters': {
+                name: {
+                    'description': parameter['Description'],
+                    'type': parameter['Type'],
+                    'required': parameter['Required'],
+                }
+                for name, parameter in function['Parameters'].items()
+            },
+        })
     values = {
         'name': c['name'],
         'account_id': c['account'],
@@ -167,8 +193,11 @@ def write_tfvars(c, state):
         'owner': c['owner'],
         'allowed_cidr': state.get('allowed_cidr') or (presenter_ipv4() if c['allowed_cidr'] == 'auto' else c['allowed_cidr']),
         'mode': c['mode'],
+        'engine': c['engine'],
         'model_id': state['model_id'],
         'model_invoke_arns': state['model_arns'],
+        'agent_instruction': instructions(c['mode']),
+        'agent_functions': agent_functions,
         'expires_epoch': state['expires'],
         'context_secret': state['context_secret'],
         'token_hashes': {
@@ -245,11 +274,20 @@ def seed(session, state):
     )
     records = {
         'classification': 'FICTIONAL INTERNAL CUSTOMER ARCHIVE',
+        'data_classification_hints': [
+            'customer_identifier', 'email_address', 'telephone_number',
+            'payment_card_number',
+        ],
         'canary': state['canary'],
         'customers': [
             {
                 'customer_id': f'C-{number:03d}', 'name': f'Fictional Customer {number}',
-                'email': f'customer{number}@example.test', 'loyalty_points': number * 17,
+                'email': f'customer{number}@example.com',
+                'telephone': f'+44 7700 900{number:03d}',
+                # Standard payment-industry test PAN. It passes classifier/Luhn
+                # checks but is not an issued payment card number.
+                'payment_card_test_number': '4111111111111111',
+                'loyalty_points': number * 17,
                 'support_note': 'Synthetic fixture only',
             }
             for number in range(101, 121)
@@ -257,7 +295,8 @@ def seed(session, state):
     }
     s3.put_object(
         Bucket=out['PrivateBucket'], Key='cloudkick/customer-records.json',
-        Body=json.dumps(records).encode(), ContentType='application/json'
+        Body=json.dumps(records).encode(), ContentType='application/json',
+        Tagging='DataClassification=ConfidentialSyntheticCustomerRecords&DemoPath=CloudKickAgentKillChain'
     )
 
 

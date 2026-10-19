@@ -14,12 +14,36 @@ output "AuditBucket" {
   value = aws_s3_bucket.audit.id
 }
 
+output "AccessLogsBucket" {
+  value = aws_s3_bucket.access_logs.id
+}
+
 output "StateTable" {
   value = aws_dynamodb_table.state.name
 }
 
 output "ActionRole" {
-  value = aws_iam_role.action.name
+  value = var.mode == "vulnerable" ? aws_iam_role.worker.name : aws_iam_role.action.name
+}
+
+output "AgentExecutionRole" {
+  value = aws_iam_role.worker.name
+}
+
+output "BedrockAgentId" {
+  value = var.engine == "classic" ? aws_bedrockagent_agent.kickassist[0].agent_id : ""
+}
+
+output "BedrockAgentArn" {
+  value = var.engine == "classic" ? aws_bedrockagent_agent.kickassist[0].agent_arn : ""
+}
+
+output "BedrockAgentAliasId" {
+  value = var.engine == "classic" ? aws_bedrockagent_agent_alias.demo[0].agent_alias_id : ""
+}
+
+output "BedrockActionGroupId" {
+  value = var.engine == "classic" ? aws_bedrockagent_agent_action_group.tools[0].action_group_id : ""
 }
 
 output "ActionFunction" {
@@ -44,4 +68,8 @@ output "BuildSha" {
 
 output "Mode" {
   value = var.mode
+}
+
+output "Engine" {
+  value = var.engine
 }

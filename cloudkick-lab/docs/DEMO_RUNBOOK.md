@@ -117,20 +117,64 @@ and [ATT&CK T1530 Data from Cloud Storage](https://attack.mitre.org/techniques/T
 
 Start from the assessor request reference and unexpected private-object access.
 
-1. In Wiz, filter the lab account and CloudKick tags. Verify scan freshness and connector
-   scope before drawing conclusions.
-2. Locate the public API, Bridge, Worker, Action function, Action execution role and the
-   private S3 bucket. Distinguish internet reachability from application authentication.
-3. Follow the effective path: customer request → Bridge → Worker → vulnerable orchestration
-   → Action role → private object.
-4. Highlight the mismatch: the role is allowed to read the object, while the vulnerable
-   handler checks the target but not the customer's support entitlement.
-5. Correlate the Action record's S3 request ID with the CloudTrail data event. Mark each
+1. In Wiz, filter the lab account and `DemoPath=CloudKickAgentKillChain` (or the
+   `KillChainStage` tags). Verify scan freshness and connector scope before drawing
+   conclusions.
+2. Open `cloudkick-*-worker`, the AI execution role, `cloudkick-*-agent-tools` and the
+   private S3 bucket. In vulnerable mode confirm all three Lambdas use the Worker role.
+3. Expand the role's effective relationships: API/Bridge entry → Worker invoking Bedrock
+   → agent-tool Lambda → whole private-bucket read/list permission.
+4. Highlight the mismatch: a returns assistant identity can enumerate and read the private
+   archive, while the vulnerable handler checks the exact target but not the customer's
+   support entitlement.
+5. Correlate the agent-tool record's S3 request ID with the CloudTrail data event. Mark each
    statement as observed in Wiz, verified in AWS or inferred from application evidence.
 6. Compare the secure stack: historical-record tools absent from the customer schema,
    stale calls rejected by the handler and private S3 grants absent from the role.
 7. Replay the normal customer flow on the secure stack to show that remediation removes
    the unsafe path without breaking returns.
+
+### What Wiz should show after this revision
+
+Start from the **Worker/AI execution role**. In vulnerable mode it is now the actual
+principal for Bridge, Worker and `*-agent-tools`, and it owns all three inline policies:
+`CloudKickBridgeScope`, `CloudKickWorkerScope` and `CloudKickActionScope`. The last policy
+contains the deliberate whole-private-bucket read/list grant. This removes the previous
+graph break where Wiz could see Bedrock on the Worker role but S3 only on a separate
+Action role. The model-without-guardrail finding remains useful supporting AI posture,
+but it is not by itself proof of the authorisation defect. The CloudTrail destination is
+evidence infrastructure, not the data target; server-access logging is enabled on it so
+its unrelated logging issue should clear after rescan.
+
+Use the tags to collect the intended resources, then prove the path in this order:
+
+| Kill-chain view | Resource or evidence | What it proves |
+| --- | --- | --- |
+| Initial access | API Gateway and Bridge tagged `InitialAccess` | A customer can reach the restricted service from the allowed network |
+| AI execution | Worker role tagged `AgentExecutionIdentity` and Worker Lambda tagged `AgentOrchestrator` | Converse: the role invokes model and tool directly. Classic: it invokes the prepared agent alias. |
+| Native agent (Classic) | `*-kickassist` → `CloudKickReturnsAndHistoricalRecords` action group → `*-agent-tools` | The managed agent's declared function tools and Lambda executor are real AWS resources, not inferred tags |
+| Tool access | `*-agent-tools` tagged `AgentToolExecutor` and `AIToolNames=Returns,HistoricalServiceRecords` | The workload hosts both legitimate and unsafe diagnostic capabilities |
+| Privilege misuse | `CloudKickActionScope` on the AI execution role | The customer-facing AI principal has private-bucket authority unrelated to returns |
+| Collection target | Private bucket tagged `CollectionTarget`, `CrownJewel=true` and `DataClassification=ConfidentialSyntheticCustomerRecords` | The role can list and read the isolated private bucket |
+| Collection | Matched CloudTrail `GetObject` event | The specific object read completed successfully |
+| Objective | Customer job and returned canary | The result crossed the customer entitlement boundary |
+| Evidence | CloudTrail and access-log buckets tagged `Evidence` | The audit trail supports the investigation but is not the impact target |
+
+A built-in toxic-combination Issue is still conditional. Wiz must have current IAM
+analysis, the relevant project scope and—if the demo depends on a data finding—DSPM
+coverage and a completed object scan. The archive contains reserved-domain contacts,
+reserved UK drama phone numbers and a standard non-issued payment test number to improve
+classifier visibility; the `DataClassification` tag is only a label. The source-IP
+restriction can prevent the API from being classified as broadly internet exposed. If
+the Issue view shows only its rule evidence, use **View on Security Graph**, expand the AI
+execution role, then open the private datastore's **Identity** view. Join the successful
+tool record and CloudTrail event for runtime proof. Do not make the API or S3 bucket public
+merely to force severity.
+
+If this stack uses `engine=converse`, omit the Native agent row and describe KickAssist
+as a custom Bedrock-powered agent. If it uses `engine=classic`, open the actual Agent and
+action group before pivoting to the Worker/AI execution role. Never present the optional
+Classic resources as observed when the deployed stack is Converse.
 
 ## Suggested 60-minute shape
 

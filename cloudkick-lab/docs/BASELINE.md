@@ -56,6 +56,9 @@ Excluded from the primary demo:
 - Persistence, destructive actions or account-wide enumeration.
 - Real refunds, payments, carrier labels or customer information.
 - A separate support administration portal.
+
+An optional Defender graph profile may deploy Agents Classic when the target account
+remains eligible. The primary Converse demo does not depend on that profile.
 - Guaranteed Wiz Issues, graph edges, Red Agent results or Blue Agent verdicts.
 
 ## 3. Business story and fixtures
@@ -108,6 +111,7 @@ It is not required by the returns workflow.
 | Business S3 bucket | Return policy and customer-owned synthetic orders |
 | Private S3 bucket | Synthetic internal archive and canary |
 | Audit S3 bucket | CloudTrail delivery |
+| Access-log S3 bucket | Server-access logs for the CloudTrail destination |
 | CloudTrail | S3 data events for the business and private buckets |
 | CloudWatch Logs | API, Bridge, Worker and Action operational evidence |
 | SQS failure queue | Retention of failed asynchronous Worker invocations |
@@ -120,10 +124,10 @@ artifact bucket is unnecessary unless package size later requires it.
 | Identity | Source | Authority |
 | --- | --- | --- |
 | Customer subject | Server-side token mapping in Bridge | Access only to that customer's jobs, proposals, reviews and orders |
-| Bridge role | Lambda execution role | DynamoDB application items and asynchronous Worker invocation |
-| Worker role | Lambda execution role | DynamoDB session/job state, Bedrock model invocation and Action invocation |
-| Action role, vulnerable | Lambda execution role | Business objects plus the exact private archive and its prefix listing |
-| Action role, secure | Lambda execution role | Business objects only |
+| AI execution role, vulnerable | Shared Lambda execution role | Bridge entry point, Worker/Bedrock orchestration, agent-tool invocation, business objects and whole isolated private-bucket read/list access |
+| Bridge role, secure | Lambda execution role | DynamoDB application items and asynchronous Worker invocation |
+| Worker role, secure | Lambda execution role | DynamoDB session/job state, Bedrock model invocation and agent-tool invocation |
+| Agent-tool role, secure | Lambda execution role | Business objects only |
 | Presenter/deployer | Temporary AWS credentials outside the application | Terraform, seeding, evidence collection and teardown |
 | Wiz connector | Tenant-generated read integration | Only the permissions and regions approved by the tenant owner |
 
@@ -162,7 +166,7 @@ business operation.
 
 | Tool | Vulnerable behaviour | Lab boundary |
 | --- | --- | --- |
-| search_historical_service_records | Searches the configured synthetic service archive without verifying a support entitlement | One prefix in one lab bucket |
+| search_historical_service_records | Searches the configured synthetic service archive without verifying a support entitlement | One isolated lab bucket |
 | read_historical_service_record | Reads the discovered object without verifying a support entitlement | One exact object, maximum 8 KiB |
 
 Customer identity is never a model-supplied tool parameter.
@@ -173,7 +177,8 @@ Customer identity is never a model-supplied tool parameter.
 | --- | --- | --- |
 | Customer tool schema | Business and diagnostic tools | Business tools only |
 | Action authorisation | Diagnostic branch checks target but not support entitlement | Diagnostic names require signed support entitlement and are unavailable to customers |
-| Action IAM | Exact private object read and prefix listing present | Private grants absent |
+| Workload identities | Bridge, Worker and agent-tool Lambda share the AI execution role | Separate least-privilege execution roles |
+| AI execution IAM | Bedrock/tool invocation plus whole private-bucket read and listing | Bedrock/tool invocation; no private-bucket grants |
 | Business workflow | Ownership, approval and idempotency enforced | Unchanged |
 | S3 public access | Blocked | Blocked |
 
@@ -246,8 +251,8 @@ read.
 2. Filter resources by the CloudKick tags and lab account.
 3. Inspect the API and distinguish an internet-addressable endpoint from its
    source-CIDR restriction.
-4. Inspect Bridge, Worker and Action and their execution roles.
-5. Compare the Action role's private-object access with its returns purpose.
+4. Inspect Bridge, Worker and `*-agent-tools`; in vulnerable mode all use the AI execution role.
+5. Compare that role's Bedrock/tool relationships and private-bucket access with its returns purpose.
 6. Use supported Wiz graph relationships for role-to-data reachability.
 7. Use the application architecture and tool evidence for edges Wiz does not model.
 8. Join the Action S3 request ID to the CloudTrail request ID.
@@ -304,7 +309,7 @@ and relationships.
 ### Controlled attack path
 
 - External customer starting point and knowledge at each stage.
-- Capability discovery, tool invocation, Action role, S3 target and evidence.
+- Capability discovery, tool invocation, shared AI execution role, S3 target and evidence.
 - Trust-boundary crossings numbered to match the runbook.
 - Red used only for the deliberate unsafe path.
 

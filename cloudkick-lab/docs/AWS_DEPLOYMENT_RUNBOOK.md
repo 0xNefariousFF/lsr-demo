@@ -2,8 +2,9 @@
 
 This runbook deploys the Phase 2 demo into a dedicated AWS sandbox from a local
 machine. It uses AWS CLI credentials, Terraform and the repository's Python
-lifecycle utility. The primary and only supported deployment engine is Amazon
-Bedrock Converse.
+lifecycle utility. Bedrock Converse is the repeatable primary engine. An optional
+Agents Classic profile adds a native managed-agent/action-group graph when the AWS
+account, Region and model remain eligible.
 
 The commands below assume Bash, zsh or WSL. In PowerShell, replace `export` with
 `$env:NAME = "value"` and activate `.venv\Scripts\Activate.ps1`.
@@ -12,7 +13,7 @@ The commands below assume Bash, zsh or WSL. In PowerShell, replace `export` with
 
 Use an account that contains no production workloads or real customer data.
 The deployment creates IAM roles, a regional API Gateway account logging
-configuration, Lambda functions, three S3 buckets, DynamoDB, SQS, CloudWatch
+configuration, Lambda functions, four S3 buckets, DynamoDB, SQS, CloudWatch
 logs and a CloudTrail trail with S3 data events.
 
 For the first sandbox deployment, the simplest deployment identity is a
@@ -22,9 +23,10 @@ be able to:
 - call STS `GetCallerIdentity`;
 - read Bedrock foundation-model and inference-profile metadata;
 - create, tag, update and delete the named IAM roles and policies, attach the
-  API Gateway logging policy and pass the three Lambda roles;
+  API Gateway logging policy and pass the Lambda roles (plus the Bedrock Agent
+  service role when `engine=classic`);
 - manage Lambda, REST API Gateway account/API/stage settings, DynamoDB, S3,
-  CloudTrail, CloudWatch Logs and SQS resources;
+  CloudTrail, CloudWatch Logs, SQS and the selected Bedrock Agent resources;
 - invoke the selected Bedrock model or inference profile for validation.
 
 Do not give the deployment identity or AWS credentials to the external-user
@@ -341,13 +343,14 @@ Rules enforced by the utility:
 - `name` begins with `cloudkick-` and contains no more than 16 characters after
   that prefix;
 - the active AWS account exactly matches `account`;
-- `engine` is `converse`;
+- `engine` is `converse` or `classic`; use `classic` for the native Bedrock Agent
+  graph only after confirming account eligibility, Region and model support;
 - `mode` is `vulnerable` or `secure`;
 - `allowed_cidr` is `auto` or an IPv4 `/24` through `/32`; `auto` resolves the
   deployment machine's current public IPv4 on every plan or deploy;
 - expiry is between one and 24 hours.
 
-The three bucket names include the deployment name, account and Region. Choose a
+The four bucket names include the deployment name, account and Region. Choose a
 different deployment name if that combination already exists.
 
 ## 9. Review the Terraform plan
@@ -365,9 +368,13 @@ The command:
 5. validates Terraform and prints the plan.
 
 Review the plan before applying. It should contain only the named CloudKick lab
-resources. In vulnerable mode, the Action role has one intentional private
-`GetObject` grant and a prefix-limited `ListBucket` grant. It must not contain
-account-wide S3 read, `ListAllMyBuckets` or arbitrary DynamoDB access.
+resources. In vulnerable mode, Bridge, Worker and `*-agent-tools` intentionally use
+the Worker/AI execution role. That role receives `GetObject` for all objects and
+`ListBucket` for the one isolated private bucket; the handler remains limited to one
+exact object. It must not contain cross-account or account-wide S3 read,
+`ListAllMyBuckets`, S3 write access or arbitrary DynamoDB access. In secure mode the
+three functions use separate roles and the private grants disappear. The fourth bucket
+receives server-access logs from the CloudTrail destination and holds no business data.
 
 The following local files now contain secrets and must not be committed or
 shared:
@@ -436,7 +443,7 @@ Use a new browser conversation and run these steps:
 Save the job reference displayed below the chat for each workflow you plan to
 use as evidence.
 
-## 13. Validate the bounded vulnerable path
+## 13. Validate the controlled vulnerable path
 
 For an actual external-user rehearsal, give the participant only the printed
 **External assessment** link. It creates an ordinary C-105 customer session; it does
@@ -491,6 +498,13 @@ aws iam get-role-policy \
   --role-name "$ACTION_ROLE" \
   --policy-name CloudKickActionScope
 
+aws lambda get-function-configuration \
+  --function-name "$(jq -r '.outputs.WorkerFunction' "$LAB_STATE")" \
+  --query 'Role' --output text
+aws lambda get-function-configuration \
+  --function-name "$(jq -r '.outputs.ActionFunction' "$LAB_STATE")" \
+  --query 'Role' --output text
+
 aws cloudtrail get-trail-status \
   --name cloudkick-lsr-object-evidence \
   --region "$AWS_REGION"
@@ -498,7 +512,8 @@ aws cloudtrail get-trail-status \
 
 ## 15. Validate the secure configuration in place
 
-An in-place repair gives the clearest before/after evidence. Export vulnerable
+In vulnerable mode the two role outputs above must be identical. An in-place repair
+gives the clearest before/after evidence. Export vulnerable
 evidence first, then freeze new customer requests:
 
 ```bash

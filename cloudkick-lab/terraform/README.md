@@ -20,7 +20,10 @@ AWS quotas, model access, successful deployment or Wiz visibility.
 ## Plan and deploy
 
 Copy `config.example.json` to a gitignored configuration file, use an isolated
-AWS account, keep `engine` set to `converse`, and choose `vulnerable` or `secure`.
+AWS account and choose `vulnerable` or `secure`. Use `engine: converse` for the
+repeatable custom tool loop. Use `engine: classic` for the Defender graph profile
+only after confirming the account, Region and model can create Amazon Bedrock Agents
+Classic resources.
 
 ```bash
 python lab.py plan --config config.json
@@ -30,9 +33,25 @@ python smoke.py --state cloudkick-lsr.state.json
 
 The utility checks the active account, validates a narrow IPv4 CIDR, resolves the
 selected Bedrock model or inference profile, creates a private build manifest and
-seeds the synthetic policy, orders and one exact private archive. The `plan`
-command creates the private local variables/state needed by Terraform but does
-not apply infrastructure.
+seeds the synthetic policy, orders and one private archive object. The vulnerable
+profile deliberately assigns Bridge, Worker and the `*-agent-tools` Lambda to one
+AI execution role. In Converse it invokes Bedrock and the tool Lambda directly. In
+Classic it invokes a real Bedrock Agent whose function-schema action group targets
+the same tool Lambda. The role can list and read the whole isolated private bucket.
+These native AWS relationships make the AI-identity-to-data path inspectable in cloud
+graph tools. The tool handler still
+accepts only the one seeded object, so the customer exercise remains deterministic.
+Secure mode uses separate roles and removes the private-bucket grants. The `plan`
+command creates the private local variables/state needed by Terraform but does not
+apply infrastructure.
+
+The CloudTrail destination writes S3 server-access logs to a separate encrypted,
+private access-log bucket. This removes the unrelated "CloudTrail S3 bucket has
+logging disabled" posture issue from the main investigation. Resource tags such as
+`DemoPath`, `KillChainStage`, `AIComponent`, and `DataClassification` are navigation
+aids for the workshop; they are not security controls or a substitute for DSPM
+classification. The archive uses classifier-friendly but entirely synthetic records,
+including reserved contact data and a standard non-issued payment test number.
 
 The generated Lambda archive is staged under `artifacts/` in the private orders
 bucket and deployed to Lambda by S3 reference. This avoids embedding binary ZIP

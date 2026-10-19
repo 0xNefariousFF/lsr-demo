@@ -1,6 +1,6 @@
 # ADR 0001: Use Amazon Bedrock Converse as the primary engine
 
-- Status: accepted
+- Status: superseded by ADR 0002 for the optional Defender graph profile
 - Date: 15 October 2026
 - Decision owner: CloudKick LSR project
 

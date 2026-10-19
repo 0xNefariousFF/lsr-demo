@@ -85,6 +85,57 @@ def main():
     me = json.loads(me_body) if me_status == 200 else {}
     check('customer launch token reaches the authenticated API', me_status == 200 and me.get('customer') == 'C-104', repr((me_status, me_body[:200])))
 
+    execution_roles = {
+        name: action.get_function_configuration(FunctionName=state['outputs'][output])['Role']
+        for name, output in (
+            ('bridge', 'BridgeFunction'),
+            ('worker', 'WorkerFunction'),
+            ('agent-tools', 'ActionFunction'),
+        )
+    }
+    if state['mode'] == 'vulnerable':
+        check(
+            'vulnerable graph profile uses one shared AI execution role',
+            len(set(execution_roles.values())) == 1,
+            repr(execution_roles),
+        )
+    else:
+        check(
+            'secure graph profile separates all Lambda execution roles',
+            len(set(execution_roles.values())) == 3,
+            repr(execution_roles),
+        )
+
+    if state['engine'] == 'classic':
+        agent = session.client('bedrock-agent')
+        agent_id = state['outputs']['BedrockAgentId']
+        alias_id = state['outputs']['BedrockAgentAliasId']
+        group_id = state['outputs']['BedrockActionGroupId']
+        agent_detail = agent.get_agent(agentId=agent_id)['agent']
+        alias_detail = agent.get_agent_alias(agentId=agent_id, agentAliasId=alias_id)['agentAlias']
+        group_detail = agent.get_agent_action_group(
+            agentId=agent_id,
+            agentVersion='DRAFT',
+            actionGroupId=group_id,
+        )['agentActionGroup']
+        check(
+            'native Bedrock Agent is prepared',
+            agent_detail.get('agentStatus') == 'PREPARED',
+            repr(agent_detail.get('agentStatus')),
+        )
+        check(
+            'native Bedrock Agent alias is prepared',
+            alias_detail.get('agentAliasStatus') == 'PREPARED',
+            repr(alias_detail.get('agentAliasStatus')),
+        )
+        executor = group_detail.get('actionGroupExecutor', {}).get('lambda', '')
+        check(
+            'native action group is enabled and targets agent-tools',
+            group_detail.get('actionGroupState') == 'ENABLED'
+            and executor.endswith(':function:' + state['outputs']['ActionFunction']),
+            repr((group_detail.get('actionGroupState'), executor)),
+        )
+
     policy = call('get_return_policy')
     check('fixed return policy is readable', policy.get('policy', {}).get('automatic_return', {}).get('window_days') == 30, repr(policy))
 
