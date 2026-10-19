@@ -786,24 +786,15 @@ resource "aws_bedrockagent_agent_action_group" "tools" {
   }
 }
 
-resource "terraform_data" "agent_revision" {
-  input = sha256(jsonencode({
-    engine      = var.engine
-    mode        = var.mode
-    model       = var.model_id
-    build       = var.build_sha
-    instruction = var.agent_instruction
-    functions   = var.agent_functions
-  }))
-}
-
 resource "aws_bedrockagent_agent_alias" "demo" {
   count = var.engine == "classic" ? 1 : 0
 
   depends_on       = [aws_bedrockagent_agent_action_group.tools]
   agent_alias_name = "demo"
   agent_id         = aws_bedrockagent_agent.kickassist[0].agent_id
-  description      = "Prepared CloudKick ${var.mode} demonstration alias."
+  # Updating the description refreshes the alias in place and creates a new
+  # prepared Agent version without violating Bedrock's unique alias-name rule.
+  description = "Prepared CloudKick ${var.mode} demonstration alias for build ${var.build_sha}."
 
   tags = {
     DemoPath       = "CloudKickAgentKillChain"
@@ -811,9 +802,6 @@ resource "aws_bedrockagent_agent_alias" "demo" {
     AIComponent    = "NativeBedrockAgentAlias"
   }
 
-  lifecycle {
-    replace_triggered_by = [terraform_data.agent_revision]
-  }
 }
 
 resource "aws_lambda_function_event_invoke_config" "worker" {

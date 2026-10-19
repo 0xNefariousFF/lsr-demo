@@ -104,6 +104,14 @@ class Boundaries(unittest.TestCase):
         request=client.update_agent_action_group.call_args.kwargs
         self.assertEqual(request['actionGroupState'],'DISABLED');self.assertEqual(request['actionGroupName'],'Tools')
         self.assertEqual(request['functionSchema'],{'functions':[]})
+    def test_existing_classic_alias_is_adopted_after_interrupted_replacement(self):
+        pulled={'resources':[{'type':'aws_bedrockagent_agent','instances':[{'attributes':{'agent_id':'AGENT'}}]}]}
+        results=[types.SimpleNamespace(returncode=1,stdout='',stderr=''),types.SimpleNamespace(returncode=0,stdout=json.dumps(pulled),stderr=''),types.SimpleNamespace(returncode=0,stdout='',stderr='')]
+        client=MagicMock();client.list_agent_aliases.return_value={'agentAliasSummaries':[{'agentAliasName':'demo','agentAliasId':'ALIAS'}]}
+        session=MagicMock();session.client.return_value=client
+        with patch('lab.terraform',side_effect=results) as tf:
+            lab.reconcile_classic_alias(session,{'engine':'classic'})
+        self.assertEqual(tf.call_args_list[-1].args[1:],('import','-input=false','aws_bedrockagent_agent_alias.demo[0]','ALIAS,AGENT'))
     def test_classic_deployment_gate_checks_alias_and_worker_route(self):
         agent=MagicMock();agent.get_agent.return_value={'agent':{'agentStatus':'PREPARED'}}
         agent.get_agent_alias.return_value={'agentAlias':{'agentAliasStatus':'PREPARED','routingConfiguration':[{'agentVersion':'1'}]}}

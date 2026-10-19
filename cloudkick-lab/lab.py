@@ -251,6 +251,57 @@ def classic_action_groups_in_state(c):
     return groups
 
 
+def reconcile_classic_alias(session, c):
+    """Adopt a surviving named alias after an interrupted Terraform replacement."""
+    if c['engine'] != 'classic':
+        return
+    address = 'aws_bedrockagent_agent_alias.demo[0]'
+    # Older releases forced alias replacement. Recover the original object if a
+    # failed create-before-delete operation left its instance tainted.
+    terraform(c, 'untaint', address, capture=True, check=False)
+    result = terraform(c, 'state', 'pull', capture=True, check=False)
+    if result.returncode or not result.stdout.strip():
+        return
+    document = json.loads(result.stdout)
+    agent_ids = []
+    for resource in document.get('resources', []):
+        current = [
+            instance for instance in resource.get('instances', [])
+            if not instance.get('deposed')
+        ]
+        if resource.get('type') == 'aws_bedrockagent_agent_alias' and current:
+            return
+        if resource.get('type') == 'aws_bedrockagent_agent':
+            agent_ids.extend(
+                instance.get('attributes', {}).get('agent_id') for instance in current
+            )
+    agent_ids = [agent_id for agent_id in agent_ids if agent_id]
+    if not agent_ids:
+        return
+
+    client = session.client('bedrock-agent')
+    for agent_id in agent_ids:
+        token = None
+        while True:
+            request = {'agentId': agent_id, 'maxResults': 100}
+            if token:
+                request['nextToken'] = token
+            page = client.list_agent_aliases(**request)
+            existing = next(
+                (item for item in page.get('agentAliasSummaries', [])
+                 if item.get('agentAliasName') == 'demo'),
+                None,
+            )
+            if existing:
+                alias_id = existing['agentAliasId']
+                terraform(c, 'import', '-input=false', address, f'{alias_id},{agent_id}')
+                print('Adopted existing Classic Bedrock Agent alias into Terraform:', alias_id)
+                return
+            token = page.get('nextToken')
+            if not token:
+                break
+
+
 def disable_classic_action_groups(session, c):
     """Disable Terraform-owned DRAFT groups before AWS permits their deletion."""
     groups = classic_action_groups_in_state(c)
@@ -503,6 +554,7 @@ def deploy(c):
     # Terraform will re-enable it when this remains a Classic deployment.
     # This also repairs a partially completed Classic -> Converse transition.
     disable_classic_action_groups(session, c)
+    reconcile_classic_alias(session, c)
     terraform(c, 'validate')
     terraform(c, 'apply', '-input=false', '-auto-approve')
     secure_terraform_state(c)

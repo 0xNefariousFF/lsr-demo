@@ -59,9 +59,10 @@ deployment command disables the Terraform-owned DRAFT action group before AWS
 allows Terraform to remove it. A Classic deployment is only reported complete
 after the Agent, alias, enabled action group and Worker routing variables have
 all been verified against AWS and a real `InvokeAgent` response stream has
-completed. A new application build also rotates the prepared Agent alias version
-so the runtime never silently remains on an older deployment. Cleanup applies
-the same action-group lifecycle repair.
+completed. A new application build updates the existing alias in place so
+Bedrock prepares a current Agent version without colliding with its unique alias
+name. Interrupted older replacements are automatically adopted back into
+Terraform state. Cleanup applies the same action-group lifecycle repair.
 
 ## Repair
 
