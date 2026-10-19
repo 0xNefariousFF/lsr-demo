@@ -1,5 +1,5 @@
 """Offline boundary tests. AWS calls are fakes, never proof of a deployed lab."""
-import sys,os,json,time,copy,unittest,types,hashlib,base64
+import sys,os,json,time,copy,unittest,types,hashlib,base64,re
 from pathlib import Path
 from unittest.mock import MagicMock,patch
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]),str(Path(__file__).resolve().parents[1]/'src')]
@@ -234,6 +234,12 @@ class BridgeBoundaries(unittest.TestCase):
         self.assertNotIn('filename         = data.archive_file.lambda.output_path',terraform)
         self.assertIn('"x-amazon-apigateway-binary-media-types"',terraform)
         self.assertIn('"*/*"',terraform)
+    def test_provider_default_tags_fit_s3_object_limit(self):
+        terraform=(Path(__file__).resolve().parents[1]/'terraform'/'main.tf').read_text()
+        block=re.search(r'(?ms)^  tags = \{\n(.*?)^  \}\n  lambda_environment',terraform)
+        self.assertIsNotNone(block)
+        tag_keys=re.findall(r'^\s{4}[A-Za-z][A-Za-z0-9_]*\s+=',block.group(1),flags=re.MULTILINE)
+        self.assertLessEqual(len(tag_keys),10,'AWS S3 objects reject more than ten provider default tags')
     def test_terraform_exposes_graphable_ai_to_data_path_without_changing_handler_target(self):
         terraform=(Path(__file__).resolve().parents[1]/'terraform'/'main.tf').read_text()
         self.assertIn('IntentionalOverPermissivePrivateBucketRead',terraform)

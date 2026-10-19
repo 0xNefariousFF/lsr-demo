@@ -18,6 +18,8 @@ locals {
     access_logs = "${var.name}-${var.account_id}-${var.aws_region}-access-logs"
   }
   tags = {
+    # AWS S3 objects accept at most ten tags. These provider defaults also apply
+    # to the Lambda deployment ZIP, so keep this shared set at ten or fewer.
     Project         = "CloudKick"
     Environment     = "isolated-lab"
     LabName         = var.name
@@ -26,7 +28,6 @@ locals {
     ExpiresAt       = tostring(var.expires_epoch)
     ManagedBy       = "Terraform"
     DataContext     = "synthetic-demo-only"
-    Application     = "CloudKickKickAssist"
     SecurityProfile = var.mode == "vulnerable" ? "intentional-graph-demo" : "remediated-comparison"
     AgentEngine     = var.engine
   }
