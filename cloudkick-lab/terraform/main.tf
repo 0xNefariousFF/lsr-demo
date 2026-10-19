@@ -751,8 +751,10 @@ resource "aws_lambda_permission" "bedrock_agent_tools" {
 resource "aws_bedrockagent_agent_action_group" "tools" {
   count = var.engine == "classic" ? 1 : 0
 
-  depends_on         = [aws_lambda_permission.bedrock_agent_tools]
-  action_group_name  = "CloudKickReturnsAndHistoricalRecords"
+  depends_on = [aws_lambda_permission.bedrock_agent_tools]
+  # Bedrock exposes functions to the model as <action-group>__<function> and
+  # rejects the live invocation when that composite name exceeds 64 characters.
+  action_group_name  = "CloudKickAgentTools"
   action_group_state = "ENABLED"
   agent_id           = aws_bedrockagent_agent.kickassist[0].agent_id
   agent_version      = "DRAFT"

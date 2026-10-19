@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TF_ROOT = ROOT / 'terraform'
+CLASSIC_ACTION_GROUP_NAME = 'CloudKickAgentTools'
 
 
 def presenter_ipv4():
@@ -171,11 +172,26 @@ def initialise_state(c, existing=None):
     return state
 
 
+def validate_classic_tool_names(functions):
+    """Validate the runtime name Bedrock builds from action group and function."""
+    for function in functions:
+        name = function['Name']
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
+            raise ValueError(f'Classic Agent function name contains unsupported characters: {name}')
+        runtime_name = CLASSIC_ACTION_GROUP_NAME + '__' + name
+        if len(runtime_name) > 64:
+            raise ValueError(
+                f'Classic Agent runtime tool name exceeds 64 characters: {runtime_name}'
+            )
+
+
 def write_tfvars(c, state):
     from src.schema import classic_functions, instructions
 
     agent_functions = []
-    for function in classic_functions(c['mode']):
+    classic_definitions = classic_functions(c['mode'])
+    validate_classic_tool_names(classic_definitions)
+    for function in classic_definitions:
         agent_functions.append({
             'name': function['Name'],
             'description': function['Description'],

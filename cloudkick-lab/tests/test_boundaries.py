@@ -166,6 +166,13 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(vulnerable,secure)
         self.assertNotIn('canary field',vulnerable)
         self.assertNotIn('bucket name',vulnerable)
+    def test_classic_runtime_tool_names_fit_bedrock_limit(self):
+        definitions=schema.classic_functions('vulnerable')
+        lab.validate_classic_tool_names(definitions)
+        names=[lab.CLASSIC_ACTION_GROUP_NAME+'__'+item['Name'] for item in definitions]
+        self.assertLessEqual(max(map(len,names)),64)
+        with self.assertRaisesRegex(ValueError,'exceeds 64'):
+            lab.validate_classic_tool_names([{'Name':'x'*64}])
     def test_external_script_has_owned_anchor_without_internal_targets(self):
         prompts=' '.join(schema.ASSESSMENT_PROMPTS)
         self.assertIn('ORD-2001',prompts)
@@ -300,7 +307,7 @@ class BridgeBoundaries(unittest.TestCase):
         self.assertIn('resource "aws_bedrockagent_agent_action_group" "tools"',terraform)
         self.assertIn('resource "aws_bedrockagent_agent_alias" "demo"',terraform)
         self.assertIn('sid       = "InvokeNativeAgent"',terraform)
-        self.assertIn('action_group_name  = "CloudKickReturnsAndHistoricalRecords"',terraform)
+        self.assertIn('action_group_name  = "CloudKickAgentTools"',terraform)
         self.assertIn('DemoPath',terraform)
         self.assertIn('"CloudKickAgentKillChain"',terraform)
         self.assertIn('resource "aws_s3_bucket_logging" "audit"',terraform)
