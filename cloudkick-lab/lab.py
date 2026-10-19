@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Deploy, operate, evidence and remove the bounded CloudKick Terraform lab."""
 import argparse
+import base64
 import gzip
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -366,6 +368,58 @@ def validate_classic_deployment(session, state):
     )
 
 
+def classic_runtime_probe(session, state):
+    """Consume one real Agent stream so control-plane-only success is impossible."""
+    if state['engine'] != 'classic':
+        return
+    out = state['outputs']
+    session_id = secrets.token_hex(32)
+    job = 'deploy-check-' + secrets.token_hex(8)
+    body = json.dumps({
+        'actor_type': 'customer',
+        'exp': int(time.time()) + 300,
+        'job': job,
+        'session': session_id,
+        'subject': 'C-104',
+    }, sort_keys=True, separators=(',', ':'))
+    context = base64.urlsafe_b64encode(body.encode()).decode()
+    signature = hmac.new(
+        state['context_secret'].encode(), context.encode(), hashlib.sha256
+    ).hexdigest()
+    try:
+        response = session.client('bedrock-agent-runtime').invoke_agent(
+            agentId=out['BedrockAgentId'],
+            agentAliasId=out['BedrockAgentAliasId'],
+            sessionId=session_id,
+            inputText='Deployment health check: reply with READY only and do not call a tool.',
+            enableTrace=False,
+            sessionState={'sessionAttributes': {'context': context, 'signature': signature}},
+        )
+        chunks = []
+        for event in response['completion']:
+            if 'chunk' in event:
+                chunks.append(event['chunk']['bytes'])
+            failure = next(
+                ((key, value) for key, value in event.items() if key.endswith('Exception')),
+                None,
+            )
+            if failure:
+                key, value = failure
+                detail = value.get('message') if isinstance(value, dict) else str(value)
+                raise RuntimeError(f'{key}: {detail or "Bedrock Agent stream failed"}')
+    except Exception as ex:
+        error = getattr(ex, 'response', {}).get('Error', {})
+        code = error.get('Code') or type(ex).__name__
+        message = error.get('Message') or str(ex)
+        raise RuntimeError(
+            f'Classic Agent runtime probe failed ({code}): {message}. '
+            'AWS accepted the Agent configuration but rejected the live invocation.'
+        ) from ex
+    if not chunks:
+        raise RuntimeError('Classic Agent runtime probe returned no response chunk.')
+    print('Classic runtime gate passed: InvokeAgent returned a complete response stream.')
+
+
 def policy_fixture():
     return {
         'policy_name': 'CloudKick demo returns',
@@ -454,9 +508,13 @@ def deploy(c):
     secure_terraform_state(c)
     state['outputs'] = outputs(c)
     validate_classic_deployment(session, state)
-    state['deployed_at'] = datetime.now(timezone.utc).isoformat()
+    # Save resource identifiers before the data/runtime checks so a failed gate
+    # remains diagnosable without publishing a false deployed_at timestamp.
     save(state_path(c), state)
     seed(session, state)
+    classic_runtime_probe(session, state)
+    state['deployed_at'] = datetime.now(timezone.utc).isoformat()
+    save(state_path(c), state)
     print('Deployment and fixture seed complete. URL:', state['outputs']['ApiUrl'])
     print('Private session material and manifest:', state_path(c).name, '(mode 0600; keep the launch links below off shared screens)')
     print('Build:', state['build_sha'], 'Mode:', state['mode'], 'Model:', state['model_id'])

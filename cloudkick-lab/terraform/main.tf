@@ -791,6 +791,7 @@ resource "terraform_data" "agent_revision" {
     engine      = var.engine
     mode        = var.mode
     model       = var.model_id
+    build       = var.build_sha
     instruction = var.agent_instruction
     functions   = var.agent_functions
   }))

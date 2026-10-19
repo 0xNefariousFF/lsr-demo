@@ -113,6 +113,20 @@ class Boundaries(unittest.TestCase):
         state={'engine':'classic','outputs':{'BedrockAgentId':'AGENT','BedrockAgentAliasId':'ALIAS','BedrockActionGroupId':'GROUP','WorkerFunction':'worker'}}
         lab.validate_classic_deployment(session,state)
         agent.get_agent_alias.assert_called_once_with(agentId='AGENT',agentAliasId='ALIAS')
+    def test_classic_runtime_probe_consumes_a_real_agent_stream(self):
+        runtime=MagicMock();runtime.invoke_agent.return_value={'completion':iter([{'chunk':{'bytes':b'READY'}}])}
+        session=MagicMock();session.client.return_value=runtime
+        state={'engine':'classic','context_secret':'secret','outputs':{'BedrockAgentId':'AGENT','BedrockAgentAliasId':'ALIAS'}}
+        lab.classic_runtime_probe(session,state)
+        request=runtime.invoke_agent.call_args.kwargs
+        self.assertEqual(request['agentId'],'AGENT');self.assertEqual(request['agentAliasId'],'ALIAS')
+        self.assertIn('context',request['sessionState']['sessionAttributes'])
+    def test_classic_runtime_probe_reports_stream_validation_message(self):
+        runtime=MagicMock();runtime.invoke_agent.return_value={'completion':iter([{'validationException':{'message':'model invocation rejected'}}])}
+        session=MagicMock();session.client.return_value=runtime
+        state={'engine':'classic','context_secret':'secret','outputs':{'BedrockAgentId':'AGENT','BedrockAgentAliasId':'ALIAS'}}
+        with self.assertRaisesRegex(RuntimeError,'model invocation rejected'):
+            lab.classic_runtime_probe(session,state)
     def test_template_modes_and_dependencies(self):
         for engine in ('classic','converse'):
             ts=[]

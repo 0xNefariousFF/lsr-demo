@@ -205,7 +205,12 @@ def classic(prompt,attrs,session,context=None,trace=None):
     for e in r['completion']:
         if 'chunk' in e:text.append(e['chunk']['bytes'].decode())
         elif 'trace' in e:traces+=1
-        elif any(k.endswith('Exception') for k in e):raise RuntimeError(str(list(e)))
+        else:
+            failure=next(((key,value) for key,value in e.items() if key.endswith('Exception')),None)
+            if failure:
+                key,value=failure
+                detail=value.get('message') if isinstance(value,dict) else str(value)
+                raise RuntimeError(f'{key}: {detail or "Bedrock Agent stream failed"}')
     log('agent_completed',context,session=session,trace_events=traces)
     if trace is not None:trace.append('<thinking>The Bedrock agent processed the request; raw internal trace data remains in presenter logs.</thinking>')
     return public_text(''.join(text)),[],[]
@@ -262,8 +267,12 @@ def handler(event,context):
         table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a, ui_actions=:u',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':visible_answer[:24000],':u':json.dumps(unique_actions)})
         log('job_completed',context,job=event['job'],subject=r['subject'],answer_chars=len(visible_answer))
     except Exception as ex:
-        error_code=getattr(ex,'response',{}).get('Error',{}).get('Code')
-        log('job_failed',context,job=event['job'],error_type=type(ex).__name__,error_code=error_code)
+        error=getattr(ex,'response',{}).get('Error',{})
+        error_code=error.get('Code')
+        # AWS EventStream exceptions carry the decisive validation/dependency
+        # message here. Keep it in restricted Worker logs, not in the browser.
+        error_message=(error.get('Message') or str(ex) or type(ex).__name__)[:1200]
+        log('job_failed',context,job=event['job'],error_type=type(ex).__name__,error_code=error_code,error_message=error_message)
         table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'error',':a':'Request failed: '+type(ex).__name__+'. Check worker logs and start a new session if needed.'})
     finally:
         if locked:table.update_item(Key=skey,UpdateExpression='SET lock_until=:zero',ExpressionAttributeValues={':zero':0})

@@ -58,8 +58,10 @@ Changing an existing workspace from `classic` to `converse` is supported. The
 deployment command disables the Terraform-owned DRAFT action group before AWS
 allows Terraform to remove it. A Classic deployment is only reported complete
 after the Agent, alias, enabled action group and Worker routing variables have
-all been verified against AWS. Cleanup applies the same action-group lifecycle
-repair.
+all been verified against AWS and a real `InvokeAgent` response stream has
+completed. A new application build also rotates the prepared Agent alias version
+so the runtime never silently remains on an older deployment. Cleanup applies
+the same action-group lifecycle repair.
 
 ## Repair
 
