@@ -482,12 +482,12 @@ data "aws_iam_policy_document" "worker" {
   }
   statement {
     sid       = "ScopedState"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
     resources = [aws_dynamodb_table.state.arn]
     condition {
       test     = "ForAllValues:StringLike"
       variable = "dynamodb:LeadingKeys"
-      values   = ["J#*", "S#*"]
+      values   = ["J#*", "S#*", "E#*"]
     }
   }
   dynamic "statement" {

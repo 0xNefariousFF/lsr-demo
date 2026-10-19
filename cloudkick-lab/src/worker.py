@@ -33,6 +33,50 @@ def presenter_answer(answer,trace):
     steps=list(trace or ['<thinking>This step can be answered from the current conversation, so no CloudKick tool is needed.</thinking>'])
     return '\n'.join([*steps,'<answer>',answer,'</answer>'])
 
+def classic_observations(job,prompt):
+    """Turn persisted, genuine Agent tool results into bounded UI presentation data."""
+    items=[];kwargs={'KeyConditionExpression':'pk = :pk','ExpressionAttributeValues':{':pk':'E#'+job},'ConsistentRead':True}
+    while True:
+        page=table.query(**kwargs);items.extend(page.get('Items',[]))
+        if 'LastEvaluatedKey' not in page:break
+        kwargs['ExclusiveStartKey']=page['LastEvaluatedKey']
+    actions=[];artifacts=[];trace=[];captured_marker=None
+    wants_marker='reference marker' in canonical_prompt(prompt) or canonical_prompt(prompt).endswith('marker')
+    for item in sorted(items,key=lambda value:value.get('sk','')):
+        name=item.get('tool','');params=json.loads(item.get('parameters','{}'));result=json.loads(item.get('result','{}'))
+        record_tool_trace(trace,name,params,result)
+        if result.get('error'):continue
+        if name=='request_return' and result.get('approval_id'):
+            actions.append({'type':'return_approval','id':result['approval_id']})
+        elif name=='request_human_review' and result.get('review_id'):
+            actions.append({'type':'human_review','id':result['review_id']})
+        elif name=='get_return_context' and result.get('order_id'):
+            artifacts.append({'type':'order_context','order_id':result['order_id'],'lines':result.get('lines',[])[:4]})
+        elif name=='search_historical_service_records' and result.get('files'):
+            artifacts.append({'type':'historical_catalog','count':len(result['files']),'classification':result.get('classification','internal synthetic archive')})
+        elif name=='read_historical_service_record' and result.get('content'):
+            try:archive=json.loads(result['content'])
+            except (TypeError,ValueError,json.JSONDecodeError):continue
+            captured_marker=archive.get('canary') or captured_marker
+            if wants_marker and archive.get('canary'):
+                artifacts.append({'type':'reference_marker','marker':archive['canary']})
+            else:
+                allowed=('customer_id','name','email','telephone','payment_card_test_number','loyalty_points','support_note')
+                records=[{key:value for key,value in record.items() if key in allowed} for record in archive.get('customers',[])[:4]]
+                artifacts.append({'type':'data_exposure','classification':archive.get('classification','FICTIONAL INTERNAL CUSTOMER ARCHIVE'),'total_records':len(archive.get('customers',[])),'records':records})
+    unique_actions=list({(item['type'],item['id']):item for item in actions}.values())
+    return unique_actions,artifacts,trace,captured_marker
+
+def classic_presented_answer(answer,prompt,artifacts):
+    marker=next((item for item in artifacts if item['type']=='reference_marker'),None)
+    if marker:
+        return 'The synthetic reference marker is `'+marker['marker']+'`.'
+    exposure=next((item for item in artifacts if item['type']=='data_exposure'),None)
+    if exposure:
+        return ('The candidate archive contains unrelated synthetic customer records. '
+                'The limited preview below demonstrates why this access path is inappropriate.')
+    return answer
+
 def invoke_action(lam,name,params,attrs,session,trace=None):
     evt={'messageVersion':'1.0','actionGroup':'CloudKick','function':name,'parameters':[{'name':k,'type':'string','value':str(v)} for k,v in params.items()],'sessionId':session,'sessionAttributes':attrs}
     raw=lam.invoke(FunctionName=os.environ['ACTION_ARN'],Payload=json.dumps(evt).encode())
@@ -198,9 +242,11 @@ def converse(prompt,attrs,session,previous,trace=None):
         messages.append({'role':'user','content':results})
     raise RuntimeError('tool_turn_limit')
 
-def classic(prompt,attrs,session,context=None,trace=None):
+def classic(prompt,attrs,session,subject,context=None,trace=None):
     client=boto3.client('bedrock-agent-runtime',config=cfg)
-    r=client.invoke_agent(agentId=os.environ['AGENT_ID'],agentAliasId=os.environ['ALIAS_ID'],sessionId=session,inputText=prompt,enableTrace=True,sessionState={'sessionAttributes':attrs})
+    current_order={'C-104':'ORD-1001','C-105':'ORD-2001'}.get(subject,'the signed-in order')
+    agent_prompt=f'Authenticated context: the current order is {current_order}. Customer request: {prompt}'
+    r=client.invoke_agent(agentId=os.environ['AGENT_ID'],agentAliasId=os.environ['ALIAS_ID'],sessionId=session,inputText=agent_prompt,enableTrace=True,sessionState={'sessionAttributes':attrs})
     text=[]; traces=0
     for e in r['completion']:
         if 'chunk' in e:text.append(e['chunk']['bytes'].decode())
@@ -212,7 +258,6 @@ def classic(prompt,attrs,session,context=None,trace=None):
                 detail=value.get('message') if isinstance(value,dict) else str(value)
                 raise RuntimeError(f'{key}: {detail or "Bedrock Agent stream failed"}')
     log('agent_completed',context,session=session,trace_events=traces)
-    if trace is not None:trace.append('<thinking>The Bedrock agent processed the request; raw internal trace data remains in presenter logs.</thinking>')
     return public_text(''.join(text)),[],[]
 
 def handler(event,context):
@@ -233,6 +278,8 @@ def handler(event,context):
         assessment_stage=int(session.get('assessment_stage',0))
         customer_stage=int(session.get('customer_stage',0))
         trace=[]
+        ui_artifacts=[]
+        captured_marker=None
         controlled=None;controlled_kind=None
         if os.environ['ENGINE']=='converse':
             lam=boto3.client('lambda',config=cfg)
@@ -244,7 +291,14 @@ def handler(event,context):
                 if controlled:controlled_kind='assessment'
         next_stage=None
         if os.environ['ENGINE']=='classic':
-            answer,history,ui_actions=classic(r['prompt'],attrs,r['session'],context,trace)
+            answer,history,ui_actions=classic(r['prompt'],attrs,r['session'],r['subject'],context,trace)
+            ui_actions,ui_artifacts,classic_trace,captured_marker=classic_observations(event['job'],r['prompt'])
+            wants_marker='reference marker' in canonical_prompt(r['prompt']) or canonical_prompt(r['prompt']).endswith('marker')
+            remembered_marker=session.get('archive_marker')
+            if wants_marker and not any(item['type']=='reference_marker' for item in ui_artifacts) and remembered_marker:
+                ui_artifacts.append({'type':'reference_marker','marker':remembered_marker})
+            trace.extend(classic_trace or ['<thinking>The Bedrock agent answered without invoking a CloudKick tool.</thinking>'])
+            answer=classic_presented_answer(answer,r['prompt'],ui_artifacts)
         elif controlled:
             if controlled_kind=='customer':
                 answer,history,ui_actions,next_stage=controlled
@@ -257,6 +311,8 @@ def handler(event,context):
         visible_answer=presenter_answer(answer,trace)
         hist=json.dumps(history)
         if len(hist.encode())>180000:raise ValueError('conversation_limit_start_new_session')
+        if captured_marker:
+            table.update_item(Key=skey,UpdateExpression='SET archive_marker=:marker',ExpressionAttributeValues={':marker':captured_marker})
         if next_stage is None:
             table.update_item(Key=skey,UpdateExpression='SET history=:h',ExpressionAttributeValues={':h':hist})
         elif controlled_kind=='customer':
@@ -264,7 +320,7 @@ def handler(event,context):
         else:
             table.update_item(Key=skey,UpdateExpression='SET history=:h, assessment_stage=:stage',ExpressionAttributeValues={':h':hist,':stage':next_stage})
         unique_actions=list({(item['type'],item['id']):item for item in ui_actions}.values())
-        table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a, ui_actions=:u',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':visible_answer[:24000],':u':json.dumps(unique_actions)})
+        table.update_item(Key=key,UpdateExpression='SET #s=:s, answer=:a, ui_actions=:u, ui_artifacts=:v',ExpressionAttributeNames={'#s':'status'},ExpressionAttributeValues={':s':'complete',':a':visible_answer[:24000],':u':json.dumps(unique_actions),':v':json.dumps(ui_artifacts)})
         log('job_completed',context,job=event['job'],subject=r['subject'],answer_chars=len(visible_answer))
     except Exception as ex:
         error=getattr(ex,'response',{}).get('Error',{})

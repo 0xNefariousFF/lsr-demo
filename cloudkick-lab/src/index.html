@@ -73,6 +73,16 @@
     .quick-action{padding:9px 12px;border:1px solid var(--line-strong);border-radius:4px;background:#fff;color:var(--ink);font-weight:600}
     .quick-action:hover{background:var(--teal-soft);border-color:var(--teal)}
     .workflow-card{margin:0 0 18px 44px;border:1px solid var(--line);border-radius:7px;background:#fff;overflow:hidden;box-shadow:0 5px 16px rgba(4,39,44,.05)}
+    .agent-activity{margin-top:9px;padding-top:8px;border-top:1px solid rgba(13,103,105,.16);font-size:11px;color:var(--muted)}
+    .agent-activity summary{cursor:pointer;color:var(--teal);font-weight:600}.agent-activity p{margin:5px 0 0!important}
+    .artifact-card{margin:0 0 18px 44px;border:1px solid var(--line);border-radius:7px;background:#fff;overflow:hidden;box-shadow:0 5px 16px rgba(4,39,44,.05)}
+    .artifact-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 16px;background:#f4f8f7;border-bottom:1px solid var(--line)}
+    .artifact-header h3{margin:0}.artifact-header p{margin:2px 0 0;color:var(--muted);font-size:12px}.artifact-body{padding:14px 16px}
+    .artifact-badge{padding:5px 8px;border-radius:999px;background:#dfeceb;color:var(--teal);font-size:11px;font-weight:700;white-space:nowrap}
+    .artifact-badge.danger{background:#f8e4e1;color:var(--danger)}
+    .order-lines{display:grid;gap:8px}.order-line{display:grid;grid-template-columns:minmax(120px,1fr) auto auto;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}.order-line:last-child{border:0}.order-line strong{display:block}.order-line span{color:var(--muted);font-size:12px}.decision{font-weight:700;color:var(--teal)!important;text-transform:capitalize}
+    .data-warning{margin:0 0 12px;color:var(--danger);font-size:12px}.data-table-wrap{overflow:auto}.data-table{width:100%;border-collapse:collapse;font-size:12px}.data-table th,.data-table td{text-align:left;padding:8px 10px;border:1px solid var(--line);white-space:nowrap}.data-table th{background:#f4f6f5;color:var(--muted);font-weight:600}.data-table code{font-size:11px}
+    .marker{padding:12px;border:1px dashed var(--teal);background:var(--teal-soft);font:600 13px ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
     .proposal-grid{display:grid;grid-template-columns:120px minmax(180px,1fr) minmax(190px,1fr) auto;gap:18px;align-items:center;padding:17px}
     .proposal-image{width:120px;height:92px;object-fit:contain;background:#f3f4f0;border-radius:5px}
     .proposal-product h3{margin:0;font-size:16px}.proposal-product p{margin:2px 0;color:var(--muted);font-size:13px}
@@ -120,7 +130,7 @@
       .hero{min-height:250px;background-position:68% center}.hero-inner{min-height:250px;padding:30px 18px;background:rgba(248,248,244,.76)}.eyebrow{font-size:11px}h1{font-size:34px;max-width:360px}.hero-copy{font-size:16px;max-width:340px;color:#314b4e}
       .workspace{padding:14px 12px 28px;display:block}.order-card{display:block;margin-bottom:12px;padding:19px}.product-image-wrap{height:150px}
       .product-image{display:block;width:100%;height:150px;object-fit:contain}
-      #chat{height:500px;padding:15px}.assistant-header{padding:14px 15px}.message-bubble{max-width:86%}.quick-actions,.workflow-card{margin-left:0}
+      #chat{height:500px;padding:15px}.assistant-header{padding:14px 15px}.message-bubble{max-width:86%}.quick-actions,.workflow-card,.artifact-card{margin-left:0}
       .proposal-grid{display:block}.proposal-image{width:100%;height:125px;margin-bottom:12px}.proposal-facts{border-left:0;border-top:1px solid var(--line);padding:10px 0;margin:10px 0}.proposal-grid .primary-button{width:100%}
       .approval-note{align-items:flex-start;flex-direction:column}.review-card{grid-template-columns:62px 1fr}.review-card img{width:62px}.status-pill{grid-column:2;justify-self:start}
       .composer{padding:12px 15px}.composer-row{display:block}#send{width:100%;margin-top:8px}.demo-details{padding:0 12px 28px}.demo-grid{grid-template-columns:1fr}
@@ -252,10 +262,17 @@
       return fragment;
     }
 
+    function presenterParts(content){
+      const source=String(content||'');const answer=source.match(/<answer>\s*([\s\S]*?)\s*<\/answer>/i);
+      const activity=[...source.matchAll(/<(thinking|tool|tool_result)>\s*([\s\S]*?)\s*<\/\1>/gi)].map(match=>({type:match[1],text:match[2].trim()}));
+      return {answer:answer?answer[1].trim():source.replace(/<\/?(?:thinking|tool|tool_result|answer)>/gi,'').trim(),activity};
+    }
+
     function message(who,content){
       const row=document.createElement('div');row.className='message-row '+(who==='You'?'user':'assistant');
       const avatar=document.createElement('span');avatar.className='message-avatar';avatar.textContent='K';avatar.setAttribute('aria-hidden','true');
-      const bubble=document.createElement('div');bubble.className='message-bubble';bubble.append(renderMarkdown(content));
+      const parts=presenterParts(content);const bubble=document.createElement('div');bubble.className='message-bubble';bubble.append(renderMarkdown(parts.answer));
+      if(who!=='You'&&parts.activity.length){const details=document.createElement('details');details.className='agent-activity';const summary=document.createElement('summary');summary.textContent='Agent activity';details.append(summary);for(const step of parts.activity){const p=document.createElement('p');p.textContent=(step.type==='tool'?'Tool · ':step.type==='tool_result'?'Result · ':'Reason · ')+step.text;details.append(p)}bubble.append(details)}
       if(who!=='You')row.append(avatar);row.append(bubble);$('chat').append(row);scrollChat();return row;
     }
 
@@ -298,6 +315,18 @@
     }
 
     function workflowContainer(){const card=document.createElement('div');card.className='workflow-card';$('chat').append(card);return card}
+
+    function artifactContainer(title,subtitle,badge,danger=false){const card=document.createElement('div');card.className='artifact-card';const header=document.createElement('div');header.className='artifact-header';const copy=document.createElement('div');const heading=document.createElement('h3');heading.textContent=title;const detail=document.createElement('p');detail.textContent=subtitle;copy.append(heading,detail);const pill=document.createElement('span');pill.className='artifact-badge'+(danger?' danger':'');pill.textContent=badge;header.append(copy,pill);const body=document.createElement('div');body.className='artifact-body';card.append(header,body);$('chat').append(card);return body}
+
+    function showOrderArtifact(artifact){const key='artifact:order:'+artifact.order_id;if(hydratedActions.has(key))return;hydratedActions.add(key);const body=artifactContainer('Verified order '+artifact.order_id,'Live eligibility returned by the CloudKick order tool','Customer scoped');const lines=document.createElement('div');lines.className='order-lines';for(const item of artifact.lines||[]){const row=document.createElement('div');row.className='order-line';const copy=document.createElement('div');const name=document.createElement('strong');name.textContent=item.name||item.line_id;const detail=document.createElement('span');detail.textContent=(item.line_id||'')+' · Size '+(item.size||'—')+' · '+(item.colour||'');copy.append(name,detail);const price=document.createElement('strong');price.textContent='£'+(item.price_gbp||'—');const decision=document.createElement('span');decision.className='decision';decision.textContent=String(item.decision||'unknown').replace('_',' ');row.append(copy,price,decision);lines.append(row)}body.append(lines);scrollChat()}
+
+    function showCatalogArtifact(artifact){const key='artifact:catalog';if(hydratedActions.has(key))return;hydratedActions.add(key);const body=artifactContainer('Historical archive located','The Agent discovered a candidate outside current order history',String(artifact.count||0)+' candidate');const p=document.createElement('p');p.textContent='Classification: '+(artifact.classification||'Internal synthetic archive')+'. Contents have not yet been previewed.';body.append(p);scrollChat()}
+
+    function showExposureArtifact(artifact){const key='artifact:exposure';if(hydratedActions.has(key))return;hydratedActions.add(key);const body=artifactContainer('Cross-customer data exposed',artifact.classification||'FICTIONAL INTERNAL CUSTOMER ARCHIVE',(artifact.total_records||0)+' synthetic records',true);const warning=document.createElement('p');warning.className='data-warning';warning.textContent='The signed-in customer reached unrelated synthetic identity and payment-test data through the Agent tool path.';body.append(warning);const wrap=document.createElement('div');wrap.className='data-table-wrap';const table=document.createElement('table');table.className='data-table';const head=document.createElement('thead');const hr=document.createElement('tr');for(const label of ['Customer','Name','Email','Telephone','Payment test number','Points']){const th=document.createElement('th');th.textContent=label;hr.append(th)}head.append(hr);table.append(head);const tbody=document.createElement('tbody');for(const record of artifact.records||[]){const tr=document.createElement('tr');for(const value of [record.customer_id,record.name,record.email,record.telephone,record.payment_card_test_number,record.loyalty_points]){const td=document.createElement('td');td.textContent=value==null?'—':String(value);tr.append(td)}tbody.append(tr)}table.append(tbody);wrap.append(table);body.append(wrap);scrollChat()}
+
+    function showMarkerArtifact(artifact){const key='artifact:marker:'+artifact.marker;if(hydratedActions.has(key))return;hydratedActions.add(key);const body=artifactContainer('Bounded proof captured','Synthetic reference marker from the exposed archive','Evidence');const marker=document.createElement('div');marker.className='marker';marker.textContent=artifact.marker;body.append(marker);scrollChat()}
+
+    async function hydrateArtifacts(artifacts){for(const artifact of Array.isArray(artifacts)?artifacts:[]){if(artifact.type==='order_context')showOrderArtifact(artifact);else if(artifact.type==='historical_catalog')showCatalogArtifact(artifact);else if(artifact.type==='data_exposure')showExposureArtifact(artifact);else if(artifact.type==='reference_marker')showMarkerArtifact(artifact)}}
 
     function showOtherItem(){
       if($('order-number').textContent!=='ORD-1001'||hydratedActions.has('other-item'))return;
@@ -363,7 +392,7 @@
         const queued=await api('chat','POST',{message:prompt,session:sid});
         for(let i=0;i<120;i++){
           await new Promise(resolve=>setTimeout(resolve,2000));const job=await api('jobs/'+queued.job);
-          if(job.status==='complete'){message('KickAssist',job.answer);await hydrateActions(job.actions,job.answer);setStatus('Request reference '+queued.job);return}
+          if(job.status==='complete'){message('KickAssist',job.answer);await hydrateArtifacts(job.artifacts);await hydrateActions(job.actions,job.answer);setStatus('Request reference '+queued.job);return}
           if(job.status==='error'){message('KickAssist',job.answer||'I could not complete that request.');setStatus('Request reference '+queued.job,true);return}
         }
         throw Error('This request is still running. Start a new conversation or check the presenter logs.');
@@ -380,7 +409,7 @@
       try{
         const me=await api('me');const profile=applyProfile(me.customer);
         $('demo-session').textContent='Signed in as '+me.customer+' ('+profile.name+')';$('demo-session').dataset.customer=me.customer;
-        $('demo-environment').textContent=(me.mode==='vulnerable'?'Assessment mode':'Secure comparison')+' · Amazon Bedrock Converse';
+        $('demo-environment').textContent=(me.mode==='vulnerable'?'Assessment mode':'Secure comparison')+' · '+(me.engine==='classic'?'Amazon Bedrock Agent Classic':'Amazon Bedrock Converse');
         $('demo-build').textContent=me.build_sha;$('send').disabled=false;$('message').disabled=false;setStatus('Ready');
       }catch(error){try{sessionStorage.removeItem('cloudkick-session')}catch(_error){}noSession();failure(error)}
     }

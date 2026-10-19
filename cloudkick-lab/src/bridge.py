@@ -64,6 +64,8 @@ def handler(event,context):
             result={k:item[k] for k in ('status','answer') if k in item}
             if item.get('ui_actions'):
                 result['actions']=json.loads(item['ui_actions'])
+            if item.get('ui_artifacts'):
+                result['artifacts']=json.loads(item['ui_artifacts'])
             return reply(200,result)
         if method=='GET' and path.startswith('/approvals/'):
             aid=path.rsplit('/',1)[1]
