@@ -641,7 +641,7 @@ resource "aws_lambda_function" "action" {
     DemoPath       = "CloudKickAgentKillChain"
     KillChainStage = "PrivilegeMisuse"
     AIComponent    = "AgentToolExecutor"
-    AIToolNames    = "Returns,HistoricalServiceRecords"
+    AIToolNames    = "Returns+HistoricalServiceRecords"
     DataAccess     = var.mode == "vulnerable" ? "PrivateArchive" : "BusinessDataOnly"
   }
 

@@ -250,6 +250,8 @@ class BridgeBoundaries(unittest.TestCase):
         self.assertIn('action      = "${var.name}-agent-tools"',terraform)
         self.assertIn('AIComponent    = "AgentExecutionIdentity"',terraform)
         self.assertIn('AIComponent    = "AgentToolExecutor"',terraform)
+        self.assertIn('AIToolNames    = "Returns+HistoricalServiceRecords"',terraform)
+        self.assertNotIn('AIToolNames    = "Returns,HistoricalServiceRecords"',terraform)
         self.assertIn('DataClassification  = "ConfidentialSyntheticCustomerRecords"',terraform)
         self.assertIn('resource "aws_bedrockagent_agent" "kickassist"',terraform)
         self.assertIn('resource "aws_bedrockagent_agent_action_group" "tools"',terraform)

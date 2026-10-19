@@ -153,7 +153,7 @@ Use the tags to collect the intended resources, then prove the path in this orde
 | Initial access | API Gateway and Bridge tagged `InitialAccess` | A customer can reach the restricted service from the allowed network |
 | AI execution | Worker role tagged `AgentExecutionIdentity` and Worker Lambda tagged `AgentOrchestrator` | Converse: the role invokes model and tool directly. Classic: it invokes the prepared agent alias. |
 | Native agent (Classic) | `*-kickassist` → `CloudKickReturnsAndHistoricalRecords` action group → `*-agent-tools` | The managed agent's declared function tools and Lambda executor are real AWS resources, not inferred tags |
-| Tool access | `*-agent-tools` tagged `AgentToolExecutor` and `AIToolNames=Returns,HistoricalServiceRecords` | The workload hosts both legitimate and unsafe diagnostic capabilities |
+| Tool access | `*-agent-tools` tagged `AgentToolExecutor` and `AIToolNames=Returns+HistoricalServiceRecords` | The workload hosts both legitimate and unsafe diagnostic capabilities |
 | Privilege misuse | `CloudKickActionScope` on the AI execution role | The customer-facing AI principal has private-bucket authority unrelated to returns |
 | Collection target | Private bucket tagged `CollectionTarget`, `CrownJewel=true` and `DataClassification=ConfidentialSyntheticCustomerRecords` | The role can list and read the isolated private bucket |
 | Collection | Matched CloudTrail `GetObject` event | The specific object read completed successfully |
