@@ -232,6 +232,140 @@ def outputs(c):
     return {key: item['value'] for key, item in json.loads(raw).items()}
 
 
+def classic_action_groups_in_state(c):
+    """Return Classic action groups Terraform still owns in this workspace."""
+    result = terraform(c, 'state', 'pull', capture=True, check=False)
+    if result.returncode or not result.stdout.strip():
+        return []
+    document = json.loads(result.stdout)
+    groups = []
+    for resource in document.get('resources', []):
+        if resource.get('type') != 'aws_bedrockagent_agent_action_group':
+            continue
+        for instance in resource.get('instances', []):
+            values = instance.get('attributes', {})
+            if values.get('agent_id') and values.get('action_group_id'):
+                groups.append(values)
+    return groups
+
+
+def disable_classic_action_groups(session, c):
+    """Disable Terraform-owned DRAFT groups before AWS permits their deletion."""
+    groups = classic_action_groups_in_state(c)
+    if not groups:
+        return
+    client = session.client('bedrock-agent')
+    for values in groups:
+        agent_id = values['agent_id']
+        version = values.get('agent_version') or 'DRAFT'
+        group_id = values['action_group_id']
+        try:
+            group = client.get_agent_action_group(
+                agentId=agent_id,
+                agentVersion=version,
+                actionGroupId=group_id,
+            )['agentActionGroup']
+        except Exception as ex:
+            code = getattr(ex, 'response', {}).get('Error', {}).get('Code')
+            if code == 'ResourceNotFoundException':
+                continue
+            raise RuntimeError(
+                f'Could not inspect Bedrock action group {group_id} before Terraform apply.'
+            ) from ex
+        if group.get('actionGroupState') == 'DISABLED':
+            continue
+        request = {
+            'agentId': agent_id,
+            'agentVersion': version,
+            'actionGroupId': group_id,
+            'actionGroupName': group['actionGroupName'],
+            'actionGroupState': 'DISABLED',
+        }
+        # UpdateAgentActionGroup replaces the group definition, so preserve every
+        # optional field returned by GetAgentActionGroup while changing its state.
+        for key in ('description', 'actionGroupExecutor', 'apiSchema', 'functionSchema',
+                    'parentActionGroupSignatureParams'):
+            if key in group:
+                request[key] = group[key]
+        if group.get('parentActionSignature'):
+            request['parentActionGroupSignature'] = group['parentActionSignature']
+        client.update_agent_action_group(**request)
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            current = client.get_agent_action_group(
+                agentId=agent_id,
+                agentVersion=version,
+                actionGroupId=group_id,
+            )['agentActionGroup']
+            if current.get('actionGroupState') == 'DISABLED':
+                print('Disabled Classic Bedrock action group before Terraform removal:', group_id)
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError(
+                f'Bedrock action group {group_id} did not become DISABLED; '
+                'Terraform cannot safely delete it.'
+            )
+
+
+def validate_classic_deployment(session, state):
+    """Refuse to report success unless the native Agent route is usable."""
+    if state['engine'] != 'classic':
+        return
+    out = state['outputs']
+    agent_id = out.get('BedrockAgentId')
+    alias_id = out.get('BedrockAgentAliasId')
+    group_id = out.get('BedrockActionGroupId')
+    if not all((agent_id, alias_id, group_id)):
+        raise RuntimeError('Classic deployment is incomplete: Terraform returned an empty Agent, alias, or action-group ID.')
+
+    client = session.client('bedrock-agent')
+    deadline = time.monotonic() + 45
+    last = 'control-plane resources were not readable'
+    while time.monotonic() < deadline:
+        try:
+            agent = client.get_agent(agentId=agent_id)['agent']
+            alias = client.get_agent_alias(agentId=agent_id, agentAliasId=alias_id)['agentAlias']
+            group = client.get_agent_action_group(
+                agentId=agent_id,
+                agentVersion='DRAFT',
+                actionGroupId=group_id,
+            )['agentActionGroup']
+            environment = session.client('lambda').get_function_configuration(
+                FunctionName=out['WorkerFunction']
+            ).get('Environment', {}).get('Variables', {})
+            statuses = {
+                'agent': agent.get('agentStatus'),
+                'alias': alias.get('agentAliasStatus'),
+                'group': group.get('actionGroupState'),
+                'routing': alias.get('routingConfiguration'),
+                'worker_engine': environment.get('ENGINE'),
+                'worker_agent': environment.get('AGENT_ID'),
+                'worker_alias': environment.get('ALIAS_ID'),
+            }
+            ready = (
+                statuses['agent'] == 'PREPARED'
+                and statuses['alias'] == 'PREPARED'
+                and statuses['group'] == 'ENABLED'
+                and bool(statuses['routing'])
+                and statuses['worker_engine'] == 'classic'
+                and statuses['worker_agent'] == agent_id
+                and statuses['worker_alias'] == alias_id
+            )
+            if ready:
+                print('Classic deployment gate passed: Agent, alias, action group, and Worker route are ready.')
+                return
+            last = json.dumps(statuses, default=str)
+        except Exception as ex:
+            last = f'{type(ex).__name__}: {ex}'
+        time.sleep(3)
+    raise RuntimeError(
+        'Classic deployment did not become usable. The deployment was not marked successful. '
+        f'Last control-plane result: {last}'
+    )
+
+
 def policy_fixture():
     return {
         'policy_name': 'CloudKick demo returns',
@@ -311,10 +445,15 @@ def plan(c):
 def deploy(c):
     session = clients(c)
     state = prepare(c, session)
+    # AWS rejects replacement or deletion of an enabled DRAFT action group.
+    # Terraform will re-enable it when this remains a Classic deployment.
+    # This also repairs a partially completed Classic -> Converse transition.
+    disable_classic_action_groups(session, c)
     terraform(c, 'validate')
     terraform(c, 'apply', '-input=false', '-auto-approve')
     secure_terraform_state(c)
     state['outputs'] = outputs(c)
+    validate_classic_deployment(session, state)
     state['deployed_at'] = datetime.now(timezone.utc).isoformat()
     save(state_path(c), state)
     seed(session, state)
@@ -442,6 +581,7 @@ def cleanup(c, state):
     write_tfvars(c, state)
     terraform(c, 'init', '-input=false')
     select_workspace(c)
+    disable_classic_action_groups(clients(c), c)
     terraform(c, 'destroy', '-input=false', '-auto-approve')
     terraform(c, 'workspace', 'select', 'default')
     terraform(c, 'workspace', 'delete', c['name'])

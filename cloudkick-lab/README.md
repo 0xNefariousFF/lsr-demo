@@ -54,6 +54,13 @@ Offline tests use fake AWS
 clients. No successful AWS deployment
 or Wiz tenant investigation is claimed by the supplied package.
 
+Changing an existing workspace from `classic` to `converse` is supported. The
+deployment command disables the Terraform-owned DRAFT action group before AWS
+allows Terraform to remove it. A Classic deployment is only reported complete
+after the Agent, alias, enabled action group and Worker routing variables have
+all been verified against AWS. Cleanup applies the same action-group lifecycle
+repair.
+
 ## Repair
 
 Preserve evidence, freeze the bridge, set `mode` to `secure` in the configuration and redeploy. The update removes diagnostic tools, rejects stale diagnostic calls and removes the private S3 grants. Start a new conversation after the update.

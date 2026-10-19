@@ -92,6 +92,27 @@ class Boundaries(unittest.TestCase):
         response.__enter__.return_value=response
         with patch('lab.urllib.request.urlopen',return_value=response):
             self.assertEqual(lab.presenter_ipv4(),'198.51.100.42/32')
+    def test_classic_action_group_is_disabled_before_terraform_removes_it(self):
+        group={'agent_id':'AGENT','agent_version':'DRAFT','action_group_id':'GROUP'}
+        client=MagicMock();client.get_agent_action_group.side_effect=[
+            {'agentActionGroup':{'agentId':'AGENT','agentVersion':'DRAFT','actionGroupId':'GROUP','actionGroupName':'Tools','actionGroupState':'ENABLED','description':'tools','actionGroupExecutor':{'lambda':'arn:lambda'},'functionSchema':{'functions':[]}}},
+            {'agentActionGroup':{'actionGroupState':'DISABLED'}},
+        ]
+        session=MagicMock();session.client.return_value=client
+        with patch('lab.classic_action_groups_in_state',return_value=[group]):
+            lab.disable_classic_action_groups(session,{'name':'cloudkick-test'})
+        request=client.update_agent_action_group.call_args.kwargs
+        self.assertEqual(request['actionGroupState'],'DISABLED');self.assertEqual(request['actionGroupName'],'Tools')
+        self.assertEqual(request['functionSchema'],{'functions':[]})
+    def test_classic_deployment_gate_checks_alias_and_worker_route(self):
+        agent=MagicMock();agent.get_agent.return_value={'agent':{'agentStatus':'PREPARED'}}
+        agent.get_agent_alias.return_value={'agentAlias':{'agentAliasStatus':'PREPARED','routingConfiguration':[{'agentVersion':'1'}]}}
+        agent.get_agent_action_group.return_value={'agentActionGroup':{'actionGroupState':'ENABLED'}}
+        lam=MagicMock();lam.get_function_configuration.return_value={'Environment':{'Variables':{'ENGINE':'classic','AGENT_ID':'AGENT','ALIAS_ID':'ALIAS'}}}
+        session=MagicMock();session.client.side_effect=lambda service:agent if service=='bedrock-agent' else lam
+        state={'engine':'classic','outputs':{'BedrockAgentId':'AGENT','BedrockAgentAliasId':'ALIAS','BedrockActionGroupId':'GROUP','WorkerFunction':'worker'}}
+        lab.validate_classic_deployment(session,state)
+        agent.get_agent_alias.assert_called_once_with(agentId='AGENT',agentAliasId='ALIAS')
     def test_template_modes_and_dependencies(self):
         for engine in ('classic','converse'):
             ts=[]
