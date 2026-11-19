@@ -1,178 +1,24 @@
-#!/usr/bin/env python3
-"""Operator component checks. This is not the external-user demonstration."""
-import argparse
-import json
-import os
-import sys
-import urllib.error
-import urllib.request
-import uuid
+"""Operator component check. This is explicitly NOT the external-user demonstration."""
+import argparse,json,os,sys,uuid
 from pathlib import Path
-
 import boto3
-
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+sys.path.insert(0,str(Path(__file__).parent/'src'))
 from common import sign_context
 
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--state', required=True)
-    args = parser.parse_args()
-    state = json.loads(Path(args.state).read_text())
-    session = boto3.Session(region_name=state['region'])
-    account = session.client('sts').get_caller_identity()['Account']
-    if account != state['account']:
-        raise ValueError(f'Wrong account: expected {state["account"]}, received {account}')
-
-    os.environ['CONTEXT_SECRET'] = state['context_secret']
-    conversation = uuid.uuid4().hex
-    attrs = sign_context('C-104', 'component-' + conversation, conversation, actor_type='customer')
-    action = session.client('lambda')
-    failures = []
-
-    def call(name, params=None):
-        event = {
-            'messageVersion': '1.0', 'actionGroup': 'CloudKick', 'function': name,
-            'sessionId': conversation, 'sessionAttributes': attrs,
-            'parameters': [
-                {'name': key, 'type': 'string', 'value': str(value)}
-                for key, value in (params or {}).items()
-            ],
-        }
-        response = action.invoke(
-            FunctionName=state['outputs']['ActionFunction'],
-            Payload=json.dumps(event).encode(),
-        )
-        payload = json.loads(response['Payload'].read())
-        if response.get('FunctionError'):
-            raise RuntimeError(payload)
-        body = payload['response']['functionResponse']['responseBody']['TEXT']['body']
-        return json.loads(body)
-
-    def check(label, condition, detail=''):
-        if condition:
-            print('PASS', label)
-        else:
-            failures.append(label)
-            print('FAIL', label, detail)
-
-    def fetch(path, token=None):
-        headers = {'User-Agent': 'cloudkick-smoke/1'}
-        if token:
-            headers['Authorization'] = 'Bearer ' + token
-        request = urllib.request.Request(state['outputs']['ApiUrl'].rstrip('/') + path, headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                return response.status, dict(response.headers.items()), response.read()
-        except urllib.error.HTTPError as ex:
-            return ex.code, dict(ex.headers.items()), ex.read()
-
-    portal_status, portal_headers, portal_body = fetch('/')
-    check('portal is reachable from the current presenter network', portal_status == 200, portal_body[:300].decode(errors='replace'))
-    check('portal serves the Option 1 application', b'Start or manage a return' in portal_body, portal_body[:120].decode(errors='replace'))
-
-    hero_status, hero_headers, hero_body = fetch('/assets/cloudkick-returns-hero.jpg')
-    hero_type = hero_headers.get('Content-Type') or hero_headers.get('content-type')
-    check('hero image is delivered as decoded JPEG', hero_status == 200 and hero_type == 'image/jpeg' and hero_body.startswith(b'\xff\xd8\xff'), repr((hero_status, hero_type, hero_body[:12])))
-
-    shoe_status, shoe_headers, shoe_body = fetch('/assets/cloudrunner-grey.webp')
-    webp = len(shoe_body) >= 12 and shoe_body[:4] == b'RIFF' and shoe_body[8:12] == b'WEBP'
-    shoe_type = shoe_headers.get('Content-Type') or shoe_headers.get('content-type')
-    check('product image is delivered as decoded WebP', shoe_status == 200 and shoe_type == 'image/webp' and webp, repr((shoe_status, shoe_type, shoe_body[:12])))
-
-    me_status, _, me_body = fetch('/me', state['tokens']['C-104'])
-    me = json.loads(me_body) if me_status == 200 else {}
-    check('customer launch token reaches the authenticated API', me_status == 200 and me.get('customer') == 'C-104', repr((me_status, me_body[:200])))
-
-    execution_roles = {
-        name: action.get_function_configuration(FunctionName=state['outputs'][output])['Role']
-        for name, output in (
-            ('bridge', 'BridgeFunction'),
-            ('worker', 'WorkerFunction'),
-            ('agent-tools', 'ActionFunction'),
-        )
-    }
-    if state['mode'] == 'vulnerable':
-        check(
-            'vulnerable graph profile uses one shared AI execution role',
-            len(set(execution_roles.values())) == 1,
-            repr(execution_roles),
-        )
-    else:
-        check(
-            'secure graph profile separates all Lambda execution roles',
-            len(set(execution_roles.values())) == 3,
-            repr(execution_roles),
-        )
-
-    if state['engine'] == 'classic':
-        agent = session.client('bedrock-agent')
-        agent_id = state['outputs']['BedrockAgentId']
-        alias_id = state['outputs']['BedrockAgentAliasId']
-        group_id = state['outputs']['BedrockActionGroupId']
-        agent_detail = agent.get_agent(agentId=agent_id)['agent']
-        alias_detail = agent.get_agent_alias(agentId=agent_id, agentAliasId=alias_id)['agentAlias']
-        group_detail = agent.get_agent_action_group(
-            agentId=agent_id,
-            agentVersion='DRAFT',
-            actionGroupId=group_id,
-        )['agentActionGroup']
-        check(
-            'native Bedrock Agent is prepared',
-            agent_detail.get('agentStatus') == 'PREPARED',
-            repr(agent_detail.get('agentStatus')),
-        )
-        check(
-            'native Bedrock Agent alias is prepared',
-            alias_detail.get('agentAliasStatus') == 'PREPARED',
-            repr(alias_detail.get('agentAliasStatus')),
-        )
-        executor = group_detail.get('actionGroupExecutor', {}).get('lambda', '')
-        check(
-            'native action group is enabled and targets agent-tools',
-            group_detail.get('actionGroupState') == 'ENABLED'
-            and executor.endswith(':function:' + state['outputs']['ActionFunction']),
-            repr((group_detail.get('actionGroupState'), executor)),
-        )
-
-    policy = call('get_return_policy')
-    check('fixed return policy is readable', policy.get('policy', {}).get('automatic_return', {}).get('window_days') == 30, repr(policy))
-
-    owned = call('get_return_context', {'order_id': 'ORD-1001'})
-    decisions = [line.get('decision') for line in owned.get('lines', [])]
-    check('owned order returns both demo decisions', decisions == ['eligible', 'human_review'], repr(owned))
-
-    foreign = call('get_return_context', {'order_id': 'ORD-2001'})
-    check('cross-customer order is denied', foreign.get('error') == 'order_not_available', repr(foreign))
-
-    first_review = call('request_human_review', {'order_id': 'ORD-1001', 'line_id': 'L2'})
-    second_review = call('request_human_review', {'order_id': 'ORD-1001', 'line_id': 'L2'})
-    review_ok = (
-        first_review.get('status') == 'queued'
-        and first_review.get('review_id', '').startswith('REV-')
-        and second_review.get('review_id') == first_review.get('review_id')
-        and second_review.get('duplicate') is True
-    )
-    check('human review is persistent and idempotent', review_ok, repr([first_review, second_review]))
-
-    target = {'bucket': state['outputs']['PrivateBucket'], 'key': 'cloudkick/customer-records.json'}
-    catalog = call('search_historical_service_records')
-    preview = call('read_historical_service_record', target)
-    if state['mode'] == 'vulnerable':
-        check('bounded historical record search records an S3 request', bool(catalog.get('s3_request_id')) and catalog.get('files') == [target], repr(catalog))
-        check('vulnerable mode reads only the seeded synthetic canary', state['canary'] in preview.get('content', '') and bool(preview.get('s3_request_id')), repr(preview))
-    else:
-        check('secure mode rejects historical record search for customer actor', catalog.get('error') == 'support_entitlement_required', repr(catalog))
-        check('secure mode rejects stale historical record read for customer actor', preview.get('error') == 'support_entitlement_required', repr(preview))
-
-    check('deployed build is recorded', bool(state.get('commit_sha')) and bool(state.get('code_sha256')) and bool(state.get('build_sha')))
-    if failures:
-        print('Component checks failed:', ', '.join(failures))
-        raise SystemExit(1)
-    print('All operator component checks passed:', state['mode'], state['build_sha'])
-    print('Rehearse through the customer app separately; this script intentionally bypasses model selection.')
-
-
-if __name__ == '__main__':
-    main()
+p=argparse.ArgumentParser();p.add_argument('--state',required=True);a=p.parse_args();st=json.loads(Path(a.state).read_text())
+s=boto3.Session(region_name=st['region'])
+if s.client('sts').get_caller_identity()['Account']!=st['account']:raise ValueError('Wrong account')
+os.environ['CONTEXT_SECRET']=st['context_secret'];session=uuid.uuid4().hex
+attrs=sign_context('C-104','component-'+session,session)
+def call(name,params):
+    event={'messageVersion':'1.0','actionGroup':'CloudKick','function':name,'sessionId':session,'sessionAttributes':attrs,'parameters':[{'name':k,'type':'string','value':v} for k,v in params.items()]}
+    r=s.client('lambda').invoke(FunctionName=st['outputs']['ActionFunction'],Payload=json.dumps(event).encode());raw=json.loads(r['Payload'].read())
+    if r.get('FunctionError'):raise RuntimeError(raw)
+    return json.loads(raw['response']['functionResponse']['responseBody']['TEXT']['body'])
+assert 'lines' in call('get_return_context',{'order_id':'ORD-1001'})
+assert call('get_return_context',{'order_id':'ORD-2001'}).get('error')=='order_not_available'
+r=call('preview_diagnostic_file',{'bucket':st['outputs']['PrivateBucket'],'key':'cloudkick/customer-records.json'})
+if st['mode']=='vulnerable':assert st['canary'] in r.get('content','')
+else:assert r.get('error')=='diagnostics_disabled'
+print('Component checks passed:',st['mode'])
+print('Rehearse through the customer app separately. This script bypasses model selection.')

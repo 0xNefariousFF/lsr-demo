@@ -1,762 +1,149 @@
 #!/usr/bin/env python3
-"""Deploy, operate, evidence and remove the bounded CloudKick Terraform lab."""
-import argparse
-import base64
-import gzip
-import hashlib
-import hmac
-import ipaddress
-import json
-import os
-import re
-import secrets
-import shutil
-import subprocess
-import time
-import urllib.request
-from datetime import datetime, timezone
+"""Deploy, collect evidence and remove only this lab. Requires boto3 locally."""
+import argparse, json, os, time, zipfile, io, hashlib, secrets, ipaddress, re, gzip
 from pathlib import Path
+from datetime import datetime,timezone
+from infra import template
 
-ROOT = Path(__file__).resolve().parent
-TF_ROOT = ROOT / 'terraform'
-CLASSIC_ACTION_GROUP_NAME = 'CloudKickAgentTools'
-
-
-def presenter_ipv4():
-    request = urllib.request.Request(
-        'https://checkip.amazonaws.com',
-        headers={'User-Agent': 'cloudkick-lab/1'},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            value = response.read(64).decode().strip()
-        address = ipaddress.ip_address(value)
-        if address.version != 4:
-            raise ValueError('service returned a non-IPv4 address')
-        return str(address) + '/32'
-    except Exception as ex:
-        raise RuntimeError(
-            'Could not detect the presenter public IPv4 address. Check network access '
-            'to https://checkip.amazonaws.com or set allowed_cidr explicitly.'
-        ) from ex
-
-
-def save(path, data):
-    path.write_text(json.dumps(data, indent=2, default=str) + '\n')
-    path.chmod(0o600)
-
+ROOT=Path(__file__).resolve().parent
+def save(path,data):
+    path.write_text(json.dumps(data,indent=2,default=str));path.chmod(0o600)
 
 def load_config(path):
-    c = json.loads(Path(path).read_text())
-    if c.get('is_isolated_lab') is not True:
-        raise ValueError('Use a dedicated isolated lab account and set is_isolated_lab=true.')
-    if not re.fullmatch(r'cloudkick-[a-z0-9-]{1,16}', c['name']):
-        raise ValueError('name must start cloudkick- and be at most 26 characters')
-    if c.get('engine') not in ('converse', 'classic'):
-        raise ValueError('engine must be converse or classic')
-    if c['mode'] not in ('vulnerable', 'secure'):
-        raise ValueError('mode must be vulnerable or secure')
-    if not re.fullmatch(r'\d{12}', c['account']):
-        raise ValueError('Explicit 12-digit lab account required')
-    if c['allowed_cidr'] != 'auto':
-        ip = ipaddress.ip_network(c['allowed_cidr'])
-        if ip.version != 4 or ip.prefixlen < 24:
-            raise ValueError('Use allowed_cidr=auto, the presenter IPv4 /32 or a narrow lab range /24 or smaller')
-    if not 1 <= int(c.get('hours', 8)) <= 24:
-        raise ValueError('Lab expiry must be 1 to 24 hours')
+    c=json.loads(Path(path).read_text())
+    if c.get('is_isolated_lab') is not True:raise ValueError('Use a dedicated isolated lab account and set is_isolated_lab=true.')
+    if not re.fullmatch(r'cloudkick-[a-z0-9-]{1,16}',c['name']):raise ValueError('name must start cloudkick- and be at most 26 characters')
+    if c['engine'] not in ('classic','converse') or c['mode'] not in ('vulnerable','secure'):raise ValueError('Invalid mode or engine')
+    if not re.fullmatch(r'\d{12}',c['account']):raise ValueError('Explicit 12-digit lab account required')
+    ip=ipaddress.ip_network(c['allowed_cidr'])
+    if ip.version!=4:raise ValueError('allowed_cidr must be an IPv4 network')
+    if not 1<=int(c.get('hours',8))<=24:raise ValueError('Lab expiry must be 1 to 24 hours')
     return c
-
 
 def clients(c):
     import boto3
-    session = boto3.Session(region_name=c['region'])
-    identity = session.client('sts').get_caller_identity()
-    if identity['Account'] != c['account']:
-        raise ValueError(f'AWS account mismatch: expected {c["account"]}, received {identity["Account"]}')
-    return session
+    s=boto3.Session(region_name=c['region'])
+    if s.client('sts').get_caller_identity()['Account']!=c['account']:raise ValueError('AWS account mismatch')
+    return s
 
+def state_path(c):return ROOT/(c['name']+'.state.json')
 
-def state_path(c):
-    return ROOT / (c['name'] + '.state.json')
-
-
-def terraform_binary():
-    binary = os.environ.get('TERRAFORM_BIN') or shutil.which('terraform')
-    if not binary:
-        raise RuntimeError('Terraform >=1.5 is required. Install it or set TERRAFORM_BIN.')
-    return binary
-
-
-def terraform(c, *args, capture=False, check=True):
-    command = [terraform_binary(), f'-chdir={TF_ROOT}', *args]
-    result = subprocess.run(command, text=True, capture_output=capture, check=False)
-    if check and result.returncode:
-        if capture:
-            print(result.stdout, end='')
-            print(result.stderr, end='')
-        raise RuntimeError('Terraform command failed: ' + ' '.join(args))
-    return result
-
-
-def select_workspace(c, create=False):
-    selected = terraform(c, 'workspace', 'select', c['name'], capture=True, check=False)
-    if selected.returncode and create:
-        terraform(c, 'workspace', 'new', c['name'])
-    elif selected.returncode:
-        raise RuntimeError(f'Terraform workspace {c["name"]} is missing; deploy or plan it first.')
-
-
-def secure_terraform_state(c):
-    directory = TF_ROOT / 'terraform.tfstate.d' / c['name']
-    if directory.exists():
-        directory.chmod(0o700)
-        for path in directory.glob('terraform.tfstate*'):
-            if path.is_file():
-                path.chmod(0o600)
-
-
-def resolve_model(session, c):
-    from botocore.exceptions import ClientError
-    bedrock = session.client('bedrock')
-    if c['engine'] == 'converse':
-        runtime = session.client('bedrock-runtime')
-        if not hasattr(runtime, 'converse'):
-            raise RuntimeError('The installed boto3 does not expose Bedrock Converse. Upgrade requirements.')
-    else:
-        runtime = session.client('bedrock-agent-runtime')
-        if not hasattr(runtime, 'invoke_agent'):
-            raise RuntimeError('The installed boto3 does not expose Bedrock Agent Runtime. Upgrade requirements.')
+def resolve_model(s,c):
+    bed=s.client('bedrock')
     try:
-        model = bedrock.get_foundation_model(modelIdentifier=c['model_id'])['modelDetails']
-        return [model['modelArn']]
-    except ClientError as ex:
-        if c['engine'] == 'classic':
-            raise ValueError(
-                'engine=classic requires a foundation model ID supported by Bedrock Agents; '
-                'an inference profile ID cannot be used as the agent foundation_model.'
-            ) from ex
-        profile = bedrock.get_inference_profile(inferenceProfileIdentifier=c['model_id'])
-        return [profile['inferenceProfileArn']] + [model['modelArn'] for model in profile['models']]
+        m=bed.get_foundation_model(modelIdentifier=c['model_id'])['modelDetails']
+        return [m['modelArn']]
+    except Exception:
+        # Both profile ARN and profile ID are accepted by this API.
+        p=bed.get_inference_profile(inferenceProfileIdentifier=c['model_id'])
+        return [p['inferenceProfileArn']]+[m['modelArn'] for m in p['models']]
 
-
-def source_manifest():
-    digest = hashlib.sha256()
-    for path in sorted((ROOT / 'src').rglob('*')):
-        if path.is_file() and path.suffix in ('.py', '.html', '.jpg', '.webp', '.woff2'):
-            digest.update(str(path.relative_to(ROOT / 'src')).encode())
-            digest.update(b'\0')
-            digest.update(path.read_bytes())
-    code_sha = digest.hexdigest()
-    try:
-        commit_sha = subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        commit_sha = 'unversioned'
-    return {
-        'commit_sha': commit_sha,
-        'code_sha256': code_sha,
-        'build_sha': commit_sha[:12] + '-' + code_sha[:12],
-    }
-
-
-def initialise_state(c, existing=None):
-    state = existing or {k: c[k] for k in ('account', 'region', 'name')}
-    if state['account'] != c['account'] or state['region'] != c['region']:
-        raise ValueError('Existing state belongs to a different account or region')
-    state.setdefault('context_secret', secrets.token_urlsafe(48))
-    state.setdefault('tokens', {customer: secrets.token_urlsafe(32) for customer in ('C-104', 'C-105')})
-    state.setdefault('canary', 'CLOUDKICK-SYNTHETIC-' + secrets.token_hex(8).upper())
-    state['engine'] = c['engine']
-    state['mode'] = c['mode']
-    return state
-
-
-def validate_classic_tool_names(functions):
-    """Validate the runtime name Bedrock builds from action group and function."""
-    for function in functions:
-        name = function['Name']
-        if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
-            raise ValueError(f'Classic Agent function name contains unsupported characters: {name}')
-        runtime_name = CLASSIC_ACTION_GROUP_NAME + '__' + name
-        if len(runtime_name) > 64:
-            raise ValueError(
-                f'Classic Agent runtime tool name exceeds 64 characters: {runtime_name}'
-            )
-
-
-def write_tfvars(c, state):
-    from src.schema import classic_functions, instructions
-
-    agent_functions = []
-    classic_definitions = classic_functions(c['mode'])
-    validate_classic_tool_names(classic_definitions)
-    for function in classic_definitions:
-        agent_functions.append({
-            'name': function['Name'],
-            'description': function['Description'],
-            'parameters': {
-                name: {
-                    'description': parameter['Description'],
-                    'type': parameter['Type'],
-                    'required': parameter['Required'],
-                }
-                for name, parameter in function['Parameters'].items()
-            },
-        })
-    values = {
-        'name': c['name'],
-        'account_id': c['account'],
-        'aws_region': c['region'],
-        'owner': c['owner'],
-        'allowed_cidr': state.get('allowed_cidr') or (presenter_ipv4() if c['allowed_cidr'] == 'auto' else c['allowed_cidr']),
-        'mode': c['mode'],
-        'engine': c['engine'],
-        'model_id': state['model_id'],
-        'model_invoke_arns': state['model_arns'],
-        'agent_instruction': instructions(c['mode']),
-        'agent_functions': agent_functions,
-        'expires_epoch': state['expires'],
-        'context_secret': state['context_secret'],
-        'token_hashes': {
-            hashlib.sha256(token.encode()).hexdigest(): subject
-            for subject, token in state['tokens'].items()
-        },
-        'build_sha': state['build_sha'],
-    }
-    save(TF_ROOT / 'generated.auto.tfvars.json', values)
-
-
-def prepare(c, session, refresh_expiry=True):
-    path = state_path(c)
-    existing = json.loads(path.read_text()) if path.exists() else None
-    state = initialise_state(c, existing)
-    if refresh_expiry or 'expires' not in state:
-        state['expires'] = int(time.time()) + int(c.get('hours', 8)) * 3600
-    state.update(source_manifest())
-    state['allowed_cidr'] = presenter_ipv4() if c['allowed_cidr'] == 'auto' else c['allowed_cidr']
-    state['model_id'] = c['model_id']
-    state['model_arns'] = resolve_model(session, c)
-    state['generated_at'] = datetime.now(timezone.utc).isoformat()
-    save(path, state)
-    write_tfvars(c, state)
-    terraform(c, 'init', '-input=false')
-    select_workspace(c, create=True)
-    return state
-
-
-def outputs(c):
-    raw = terraform(c, 'output', '-json', capture=True).stdout
-    return {key: item['value'] for key, item in json.loads(raw).items()}
-
-
-def classic_action_groups_in_state(c):
-    """Return Classic action groups Terraform still owns in this workspace."""
-    result = terraform(c, 'state', 'pull', capture=True, check=False)
-    if result.returncode or not result.stdout.strip():
-        return []
-    document = json.loads(result.stdout)
-    groups = []
-    for resource in document.get('resources', []):
-        if resource.get('type') != 'aws_bedrockagent_agent_action_group':
-            continue
-        for instance in resource.get('instances', []):
-            values = instance.get('attributes', {})
-            if values.get('agent_id') and values.get('action_group_id'):
-                groups.append(values)
-    return groups
-
-
-def reconcile_classic_alias(session, c):
-    """Adopt a surviving named alias after an interrupted Terraform replacement."""
-    if c['engine'] != 'classic':
-        return
-    address = 'aws_bedrockagent_agent_alias.demo[0]'
-    # Older releases forced alias replacement. Recover the original object if a
-    # failed create-before-delete operation left its instance tainted.
-    terraform(c, 'untaint', address, capture=True, check=False)
-    result = terraform(c, 'state', 'pull', capture=True, check=False)
-    if result.returncode or not result.stdout.strip():
-        return
-    document = json.loads(result.stdout)
-    agent_ids = []
-    for resource in document.get('resources', []):
-        current = [
-            instance for instance in resource.get('instances', [])
-            if not instance.get('deposed')
-        ]
-        if resource.get('type') == 'aws_bedrockagent_agent_alias' and current:
-            return
-        if resource.get('type') == 'aws_bedrockagent_agent':
-            agent_ids.extend(
-                instance.get('attributes', {}).get('agent_id') for instance in current
-            )
-    agent_ids = [agent_id for agent_id in agent_ids if agent_id]
-    if not agent_ids:
-        return
-
-    client = session.client('bedrock-agent')
-    for agent_id in agent_ids:
-        token = None
-        while True:
-            request = {'agentId': agent_id, 'maxResults': 100}
-            if token:
-                request['nextToken'] = token
-            page = client.list_agent_aliases(**request)
-            existing = next(
-                (item for item in page.get('agentAliasSummaries', [])
-                 if item.get('agentAliasName') == 'demo'),
-                None,
-            )
-            if existing:
-                alias_id = existing['agentAliasId']
-                terraform(c, 'import', '-input=false', address, f'{alias_id},{agent_id}')
-                print('Adopted existing Classic Bedrock Agent alias into Terraform:', alias_id)
-                return
-            token = page.get('nextToken')
-            if not token:
-                break
-
-
-def disable_classic_action_groups(session, c):
-    """Disable Terraform-owned DRAFT groups before AWS permits their deletion."""
-    groups = classic_action_groups_in_state(c)
-    if not groups:
-        return
-    client = session.client('bedrock-agent')
-    for values in groups:
-        agent_id = values['agent_id']
-        version = values.get('agent_version') or 'DRAFT'
-        group_id = values['action_group_id']
-        try:
-            group = client.get_agent_action_group(
-                agentId=agent_id,
-                agentVersion=version,
-                actionGroupId=group_id,
-            )['agentActionGroup']
-        except Exception as ex:
-            code = getattr(ex, 'response', {}).get('Error', {}).get('Code')
-            if code == 'ResourceNotFoundException':
-                continue
-            raise RuntimeError(
-                f'Could not inspect Bedrock action group {group_id} before Terraform apply.'
-            ) from ex
-        if group.get('actionGroupState') == 'DISABLED':
-            continue
-        request = {
-            'agentId': agent_id,
-            'agentVersion': version,
-            'actionGroupId': group_id,
-            'actionGroupName': group['actionGroupName'],
-            'actionGroupState': 'DISABLED',
-        }
-        # UpdateAgentActionGroup replaces the group definition, so preserve every
-        # optional field returned by GetAgentActionGroup while changing its state.
-        for key in ('description', 'actionGroupExecutor', 'apiSchema', 'functionSchema',
-                    'parentActionGroupSignatureParams'):
-            if key in group:
-                request[key] = group[key]
-        if group.get('parentActionSignature'):
-            request['parentActionGroupSignature'] = group['parentActionSignature']
-        client.update_agent_action_group(**request)
-
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            current = client.get_agent_action_group(
-                agentId=agent_id,
-                agentVersion=version,
-                actionGroupId=group_id,
-            )['agentActionGroup']
-            if current.get('actionGroupState') == 'DISABLED':
-                print('Disabled Classic Bedrock action group before Terraform removal:', group_id)
-                break
-            time.sleep(2)
-        else:
-            raise RuntimeError(
-                f'Bedrock action group {group_id} did not become DISABLED; '
-                'Terraform cannot safely delete it.'
-            )
-
-
-def validate_classic_deployment(session, state):
-    """Refuse to report success unless the native Agent route is usable."""
-    if state['engine'] != 'classic':
-        return
-    out = state['outputs']
-    agent_id = out.get('BedrockAgentId')
-    alias_id = out.get('BedrockAgentAliasId')
-    group_id = out.get('BedrockActionGroupId')
-    if not all((agent_id, alias_id, group_id)):
-        raise RuntimeError('Classic deployment is incomplete: Terraform returned an empty Agent, alias, or action-group ID.')
-
-    client = session.client('bedrock-agent')
-    deadline = time.monotonic() + 45
-    last = 'control-plane resources were not readable'
-    while time.monotonic() < deadline:
-        try:
-            agent = client.get_agent(agentId=agent_id)['agent']
-            alias = client.get_agent_alias(agentId=agent_id, agentAliasId=alias_id)['agentAlias']
-            group = client.get_agent_action_group(
-                agentId=agent_id,
-                agentVersion='DRAFT',
-                actionGroupId=group_id,
-            )['agentActionGroup']
-            environment = session.client('lambda').get_function_configuration(
-                FunctionName=out['WorkerFunction']
-            ).get('Environment', {}).get('Variables', {})
-            statuses = {
-                'agent': agent.get('agentStatus'),
-                'alias': alias.get('agentAliasStatus'),
-                'group': group.get('actionGroupState'),
-                'routing': alias.get('routingConfiguration'),
-                'worker_engine': environment.get('ENGINE'),
-                'worker_agent': environment.get('AGENT_ID'),
-                'worker_alias': environment.get('ALIAS_ID'),
-            }
-            ready = (
-                statuses['agent'] == 'PREPARED'
-                and statuses['alias'] == 'PREPARED'
-                and statuses['group'] == 'ENABLED'
-                and bool(statuses['routing'])
-                and statuses['worker_engine'] == 'classic'
-                and statuses['worker_agent'] == agent_id
-                and statuses['worker_alias'] == alias_id
-            )
-            if ready:
-                print('Classic deployment gate passed: Agent, alias, action group, and Worker route are ready.')
-                return
-            last = json.dumps(statuses, default=str)
-        except Exception as ex:
-            last = f'{type(ex).__name__}: {ex}'
-        time.sleep(3)
-    raise RuntimeError(
-        'Classic deployment did not become usable. The deployment was not marked successful. '
-        f'Last control-plane result: {last}'
-    )
-
-
-def classic_runtime_probe(session, state):
-    """Consume one real Agent stream so control-plane-only success is impossible."""
-    if state['engine'] != 'classic':
-        return
-    out = state['outputs']
-    session_id = secrets.token_hex(32)
-    job = 'deploy-check-' + secrets.token_hex(8)
-    body = json.dumps({
-        'actor_type': 'customer',
-        'exp': int(time.time()) + 300,
-        'job': job,
-        'session': session_id,
-        'subject': 'C-104',
-    }, sort_keys=True, separators=(',', ':'))
-    context = base64.urlsafe_b64encode(body.encode()).decode()
-    signature = hmac.new(
-        state['context_secret'].encode(), context.encode(), hashlib.sha256
-    ).hexdigest()
-    try:
-        response = session.client('bedrock-agent-runtime').invoke_agent(
-            agentId=out['BedrockAgentId'],
-            agentAliasId=out['BedrockAgentAliasId'],
-            sessionId=session_id,
-            inputText='Deployment health check: reply with READY only and do not call a tool.',
-            enableTrace=False,
-            sessionState={'sessionAttributes': {'context': context, 'signature': signature}},
-        )
-        chunks = []
-        for event in response['completion']:
-            if 'chunk' in event:
-                chunks.append(event['chunk']['bytes'])
-            failure = next(
-                ((key, value) for key, value in event.items() if key.endswith('Exception')),
-                None,
-            )
-            if failure:
-                key, value = failure
-                detail = value.get('message') if isinstance(value, dict) else str(value)
-                raise RuntimeError(f'{key}: {detail or "Bedrock Agent stream failed"}')
-    except Exception as ex:
-        error = getattr(ex, 'response', {}).get('Error', {})
-        code = error.get('Code') or type(ex).__name__
-        message = error.get('Message') or str(ex)
-        raise RuntimeError(
-            f'Classic Agent runtime probe failed ({code}): {message}. '
-            'AWS accepted the Agent configuration but rejected the live invocation.'
-        ) from ex
-    if not chunks:
-        raise RuntimeError('Classic Agent runtime probe returned no response chunk.')
-    print('Classic runtime gate passed: InvokeAgent returned a complete response stream.')
-
-
-def policy_fixture():
-    return {
-        'policy_name': 'CloudKick demo returns',
-        'version': '2026-10-demo',
-        'classification': 'FICTIONAL DEMO POLICY',
-        'summary': 'Eligible synthetic items can be returned within 30 days. Other items require simulated human review.',
-        'automatic_return': {
-            'window_days': 30,
-            'accepted_reasons': ['defect', 'unworn'],
-            'approval_required': True,
-        },
-        'human_review': 'Items outside the automatic rules may create a simulated review case. No external support system is contacted.',
-    }
-
-
-def seed(session, state):
-    s3 = session.client('s3')
-    out = state['outputs']
-    orders = [
-        {
-            'order_id': 'ORD-1001', 'customer_id': 'C-104',
-            'lines': [
-                {'line_id': 'L1', 'name': 'CloudRunner', 'price_gbp': '89.00', 'size': '9', 'colour': 'Cloud white', 'days_since_delivery': 12, 'reason': 'defect'},
-                {'line_id': 'L2', 'name': 'TrailStep', 'price_gbp': '115.00', 'size': '10', 'colour': 'Black / deep teal', 'days_since_delivery': 45, 'reason': 'change_of_mind'},
-            ],
-        },
-        {
-            'order_id': 'ORD-2001', 'customer_id': 'C-105',
-            'lines': [{'line_id': 'L1', 'name': 'CityStride', 'price_gbp': '72.00', 'size': '8', 'colour': 'Mist grey', 'days_since_delivery': 8, 'reason': 'unworn'}],
-        },
-    ]
-    for order in orders:
-        s3.put_object(
-            Bucket=out['OrdersBucket'], Key='orders/' + order['order_id'] + '.json',
-            Body=json.dumps(order).encode(), ContentType='application/json'
-        )
-    s3.put_object(
-        Bucket=out['OrdersBucket'], Key='policies/returns.json',
-        Body=json.dumps(policy_fixture()).encode(), ContentType='application/json'
-    )
-    records = {
-        'classification': 'FICTIONAL INTERNAL CUSTOMER ARCHIVE',
-        'data_classification_hints': [
-            'customer_identifier', 'email_address', 'telephone_number',
-            'payment_card_number',
-        ],
-        'canary': state['canary'],
-        'customers': [
-            {
-                'customer_id': f'C-{number:03d}', 'name': f'Fictional Customer {number}',
-                'email': f'customer{number}@example.com',
-                'telephone': f'+44 7700 900{number:03d}',
-                # Standard payment-industry test PAN. It passes classifier/Luhn
-                # checks but is not an issued payment card number.
-                'payment_card_test_number': '4111111111111111',
-                'loyalty_points': number * 17,
-                'support_note': 'Synthetic fixture only',
-            }
-            for number in range(101, 121)
-        ],
-    }
-    s3.put_object(
-        Bucket=out['PrivateBucket'], Key='cloudkick/customer-records.json',
-        Body=json.dumps(records).encode(), ContentType='application/json',
-        Tagging='DataClassification=ConfidentialSyntheticCustomerRecords&DemoPath=CloudKickAgentKillChain'
-    )
-
-
-def plan(c):
-    session = clients(c)
-    prepare(c, session)
-    terraform(c, 'validate')
-    terraform(c, 'plan', '-input=false')
-    secure_terraform_state(c)
-
+def seed(s,c,state):
+    s3=s.client('s3');out=state['outputs']
+    orders=[{'order_id':'ORD-1001','customer_id':'C-104','lines':[{'line_id':'L1','name':'CloudRunner','price_gbp':'89.00','days_since_delivery':12,'reason':'defect'},{'line_id':'L2','name':'TrailStep','price_gbp':'115.00','days_since_delivery':45,'reason':'change_of_mind'}]}, {'order_id':'ORD-2001','customer_id':'C-105','lines':[{'line_id':'L1','name':'CityStride','price_gbp':'72.00','days_since_delivery':8,'reason':'unworn'}]}]
+    for o in orders:s3.put_object(Bucket=out['OrdersBucket'],Key='orders/'+o['order_id']+'.json',Body=json.dumps(o).encode(),ContentType='application/json')
+    records={'classification':'FICTIONAL INTERNAL CUSTOMER ARCHIVE','canary':state['canary'],'customers':[{'customer_id':f'C-{i:03d}','name':f'Fictional Customer {i}','email':f'customer{i}@example.test','loyalty_points':i*17,'support_note':'Synthetic fixture only'} for i in range(101,121)]}
+    s3.put_object(Bucket=out['PrivateBucket'],Key='cloudkick/customer-records.json',Body=json.dumps(records).encode(),ContentType='application/json')
 
 def deploy(c):
-    session = clients(c)
-    state = prepare(c, session)
-    # AWS rejects replacement or deletion of an enabled DRAFT action group.
-    # Terraform will re-enable it when this remains a Classic deployment.
-    # This also repairs a partially completed Classic -> Converse transition.
-    disable_classic_action_groups(session, c)
-    reconcile_classic_alias(session, c)
-    terraform(c, 'validate')
-    terraform(c, 'apply', '-input=false', '-auto-approve')
-    secure_terraform_state(c)
-    state['outputs'] = outputs(c)
-    validate_classic_deployment(session, state)
-    # Save resource identifiers before the data/runtime checks so a failed gate
-    # remains diagnosable without publishing a false deployed_at timestamp.
-    save(state_path(c), state)
-    seed(session, state)
-    classic_runtime_probe(session, state)
-    state['deployed_at'] = datetime.now(timezone.utc).isoformat()
-    save(state_path(c), state)
-    print('Deployment and fixture seed complete. URL:', state['outputs']['ApiUrl'])
-    print('Private session material and manifest:', state_path(c).name, '(mode 0600; keep the launch links below off shared screens)')
-    print('Build:', state['build_sha'], 'Mode:', state['mode'], 'Model:', state['model_id'])
-    print('Presenter network allowed:', state['allowed_cidr'])
-    print_launch_links(state)
-
-
-def print_launch_links(state):
-    base = state['outputs']['ApiUrl']
-    print('Customer journey:', base + '#session=' + state['tokens']['C-104'])
-    print('External assessment:', base + '#session=' + state['tokens']['C-105'])
-    print('The session value stays in the URL fragment, is saved for this browser tab, and is removed from the address bar after sign-in.')
-
-
-def require_state(c):
-    path = state_path(c)
-    if not path.exists():
-        raise ValueError('Local deployment state is missing: ' + str(path))
-    state = json.loads(path.read_text())
-    if state.get('account') != c['account'] or state.get('region') != c['region']:
-        raise ValueError('Local state does not match the configured account and region')
-    return state
-
-
-def reset(session, state):
-    table = session.resource('dynamodb').Table(state['outputs']['StateTable'])
-    kwargs = {'ProjectionExpression': 'pk, sk'}
-    with table.batch_writer() as batch:
-        while True:
-            page = table.scan(**kwargs)
-            for item in page.get('Items', []):
-                batch.delete_item(Key={'pk': item['pk'], 'sk': item['sk']})
-            if 'LastEvaluatedKey' not in page:
-                break
-            kwargs['ExclusiveStartKey'] = page['LastEvaluatedKey']
-    seed(session, state)
-    print('Lab application state cleared and synthetic fixtures reseeded.')
-
-
-def evidence(session, c, state, job, dest):
-    from boto3.dynamodb.conditions import Key
-    table = session.resource('dynamodb').Table(state['outputs']['StateTable'])
-    dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    event = table.get_item(Key={'pk': 'J#' + job, 'sk': 'STATE'}, ConsistentRead=True).get('Item')
-    if not event:
-        raise ValueError('Unknown job')
-    traces = table.query(KeyConditionExpression=Key('pk').eq('E#' + job), ConsistentRead=True)['Items']
-    manifest_keys = ('engine', 'mode', 'model_id', 'model_arns', 'commit_sha', 'code_sha256', 'build_sha', 'canary', 'outputs')
-    save(dest / (job + '.json'), {
-        'job': event,
-        'tools': traces,
-        'manifest': {key: state[key] for key in manifest_keys},
-    })
-    wanted = {json.loads(trace['result']).get('s3_request_id') for trace in traces}
-    wanted.discard(None)
-    s3 = session.client('s3')
-    hits = []
-    prefix = 'AWSLogs/' + c['account'] + '/CloudTrail/'
-    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=state['outputs']['AuditBucket'], Prefix=prefix):
-        for obj in page.get('Contents', []):
-            if not obj['Key'].endswith('.json.gz'):
-                continue
-            body = s3.get_object(Bucket=state['outputs']['AuditBucket'], Key=obj['Key'])['Body'].read()
-            records = json.loads(gzip.decompress(body)).get('Records', [])
-            hits.extend(record for record in records if record.get('requestID') in wanted)
-    save(dest / (job + '.cloudtrail.json'), hits)
-    print('Evidence saved. Matching delivered CloudTrail events:', len(hits))
-    if wanted and not hits:
-        print('CloudTrail delivery may be delayed. Run evidence again later; event history excludes S3 data events.')
-
-
-def failures(session, state):
-    sqs = session.client('sqs')
-    response = sqs.receive_message(
-        QueueUrl=state['outputs']['FailureQueueUrl'], MaxNumberOfMessages=10,
-        VisibilityTimeout=0, WaitTimeSeconds=0, AttributeNames=['SentTimestamp', 'ApproximateReceiveCount']
-    )
-    messages = []
-    for item in response.get('Messages', []):
-        body = json.loads(item['Body'])
-        messages.append({
-            'job': body.get('requestPayload', {}).get('job'),
-            'condition': body.get('requestContext', {}).get('condition'),
-            'function_error': body.get('responseContext', {}).get('functionError'),
-            'sent_timestamp': item.get('Attributes', {}).get('SentTimestamp'),
-            'receive_count': item.get('Attributes', {}).get('ApproximateReceiveCount'),
-        })
-    print(json.dumps(messages, indent=2))
-
-
-def replay(session, state, job):
-    table = session.resource('dynamodb').Table(state['outputs']['StateTable'])
-    try:
-        table.update_item(
-            Key={'pk': 'J#' + job, 'sk': 'STATE'},
-            UpdateExpression='SET #s=:queued REMOVE answer',
-            ConditionExpression='#s=:error',
-            ExpressionAttributeNames={'#s': 'status'},
-            ExpressionAttributeValues={':queued': 'queued', ':error': 'error'},
-        )
-    except table.meta.client.exceptions.ConditionalCheckFailedException as ex:
-        raise ValueError('Replay requires a known job in error state') from ex
-    session.client('lambda').invoke(
-        FunctionName=state['outputs']['WorkerFunction'], InvocationType='Event',
-        Payload=json.dumps({'job': job}).encode()
-    )
-    print('Replay queued for job:', job)
-
-
-def freeze(session, state, enabled):
-    lam = session.client('lambda')
-    name = state['outputs']['BridgeFunction']
-    if enabled:
-        lam.put_function_concurrency(FunctionName=name, ReservedConcurrentExecutions=0)
+    s=clients(c);cf=s.client('cloudformation');s3=s.client('s3');path=state_path(c)
+    if path.exists():
+        state=json.loads(path.read_text())
+        if state['account']!=c['account'] or state['region']!=c['region']:raise ValueError('Existing state belongs to a different account or region')
+        if state['engine']!=c['engine']:raise ValueError('Use a new name when changing engine')
     else:
-        lam.delete_function_concurrency(FunctionName=name)
-    print('freeze complete' if enabled else 'unfreeze complete')
+        state={k:c[k] for k in ('account','region','name','engine')}
+        state.update(context_secret=secrets.token_urlsafe(48),tokens={x:secrets.token_urlsafe(32) for x in ('C-104','C-105')},canary='CLOUDKICK-SYNTHETIC-'+secrets.token_hex(8).upper())
+    c['expires']=int(time.time())+int(c.get('hours',8))*3600
+    c['token_hashes']={hashlib.sha256(token.encode()).hexdigest():sub for sub,token in state['tokens'].items()}
+    c['model_arns']=resolve_model(s,c)
+    artifact=f'{c["name"]}-{c["account"]}-{c["region"]}-artifacts'
+    if not state.get('artifact_bucket'):
+        kwargs={'Bucket':artifact}
+        if c['region']!='us-east-1':kwargs['CreateBucketConfiguration']={'LocationConstraint':c['region']}
+        s3.create_bucket(**kwargs)
+        s3.put_public_access_block(Bucket=artifact,PublicAccessBlockConfiguration={k:True for k in ('BlockPublicAcls','IgnorePublicAcls','BlockPublicPolicy','RestrictPublicBuckets')})
+        s3.put_bucket_encryption(Bucket=artifact,ServerSideEncryptionConfiguration={'Rules':[{'ApplyServerSideEncryptionByDefault':{'SSEAlgorithm':'AES256'}}]})
+        s3.put_bucket_tagging(Bucket=artifact,Tagging={'TagSet':[{'Key':'Project','Value':'CloudKick'},{'Key':'Demo','Value':'cloudkick-demo'},{'Key':'LabName','Value':c['name']}]})
+        state['artifact_bucket']=artifact;save(path,state)
+    memory=io.BytesIO()
+    with zipfile.ZipFile(memory,'w',zipfile.ZIP_DEFLATED) as z:
+        for p in sorted((ROOT/'src').iterdir()):
+            if p.is_file() and p.suffix in ('.py','.html'):
+                info=zipfile.ZipInfo(p.name,(2026,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;z.writestr(info,p.read_bytes())
+    payload=memory.getvalue();digest=hashlib.sha256(payload).hexdigest();key='code/'+digest+'.zip'
+    s3.put_object(Bucket=artifact,Key=key,Body=payload)
+    t=template(c,artifact,key);body=json.dumps(t);save(ROOT/(c['name']+'.template.json'),t)
+    cf.validate_template(TemplateBody=body)
+    args=dict(StackName=c['name'],TemplateBody=body,Parameters=[{'ParameterKey':'ContextSecret','ParameterValue':state['context_secret']}],Capabilities=['CAPABILITY_NAMED_IAM'],Tags=[{'Key':'Project','Value':'CloudKick'},{'Key':'Demo','Value':'cloudkick-demo'}])
+    try:
+        cf.describe_stacks(StackName=c['name']);exists=True
+    except cf.exceptions.ClientError as ex:
+        if 'does not exist' not in str(ex):raise
+        exists=False
+    if exists:
+        try:cf.update_stack(**args)
+        except cf.exceptions.ClientError as ex:
+            if 'No updates are to be performed' not in str(ex):raise
+        else:cf.get_waiter('stack_update_complete').wait(StackName=c['name'])
+    else:
+        cf.create_stack(**args);cf.get_waiter('stack_create_complete').wait(StackName=c['name'])
+    stack=cf.describe_stacks(StackName=c['name'])['Stacks'][0]
+    state.update(outputs={x['OutputKey']:x['OutputValue'] for x in stack.get('Outputs',[])},mode=c['mode'],model_id=c['model_id'],model_arns=c['model_arns'],code_sha256=digest,expires=c['expires'])
+    save(path,state);seed(s,c,state)
+    print('Deployment complete. URL:',state['outputs']['ApiUrl'])
+    print('Tokens and configuration:',path.name,'(keep private; tokens are not printed)')
+    print('Record model ID, alias, code hash and mode before rehearsal.')
 
+def evidence(s,c,state,job,dest):
+    from boto3.dynamodb.conditions import Key
+    table=s.resource('dynamodb').Table(state['outputs']['StateTable']);dest=Path(dest);dest.mkdir(parents=True,exist_ok=True)
+    event=table.get_item(Key={'pk':'J#'+job,'sk':'STATE'},ConsistentRead=True).get('Item')
+    if not event:raise ValueError('Unknown job')
+    traces=table.query(KeyConditionExpression=Key('pk').eq('E#'+job),ConsistentRead=True)['Items']
+    save(dest/(job+'.json'),{'job':event,'tools':traces,'manifest':{k:state[k] for k in ('engine','mode','model_id','model_arns','code_sha256','canary','outputs')}})
+    wanted={json.loads(t['result']).get('s3_request_id') for t in traces};wanted.discard(None)
+    s3=s.client('s3');hits=[]
+    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=state['outputs']['AuditBucket'],Prefix='AWSLogs/'+c['account']+'/CloudTrail/'):
+        for obj in page.get('Contents',[]):
+            if not obj['Key'].endswith('.json.gz'):continue
+            records=json.loads(gzip.decompress(s3.get_object(Bucket=state['outputs']['AuditBucket'],Key=obj['Key'])['Body'].read())).get('Records',[])
+            hits.extend(e for e in records if e.get('requestID') in wanted)
+    save(dest/(job+'.cloudtrail.json'),hits)
+    print('Evidence saved. Matching delivered CloudTrail events:',len(hits))
+    if wanted and not hits:print('CloudTrail delivery may be delayed. Run evidence again later. Event history excludes S3 data events.')
 
-def cleanup(c, state):
-    write_tfvars(c, state)
-    terraform(c, 'init', '-input=false')
-    select_workspace(c)
-    disable_classic_action_groups(clients(c), c)
-    terraform(c, 'destroy', '-input=false', '-auto-approve')
-    terraform(c, 'workspace', 'select', 'default')
-    terraform(c, 'workspace', 'delete', c['name'])
+def cleanup(s,c,state):
+    cf=s.client('cloudformation');s3=s.client('s3')
+    try:
+        cf.describe_stacks(StackName=c['name']);cf.delete_stack(StackName=c['name']);cf.get_waiter('stack_delete_complete').wait(StackName=c['name'])
+    except cf.exceptions.ClientError as ex:
+        if 'does not exist' not in str(ex):raise
+    # Data buckets are deliberately retained until stack/trail deletion finishes.
+    buckets=[f'{c["name"]}-{c["account"]}-{c["region"]}-{x}' for x in ('orders','private','audit','artifacts')]
+    for b in buckets:
+        try:tags=s3.get_bucket_tagging(Bucket=b)['TagSet']
+        except s3.exceptions.ClientError as ex:
+            if ex.response['Error']['Code'] in ('NoSuchBucket','404'):continue
+            raise
+        if not any(t['Key']=='Project' and t['Value']=='CloudKick' for t in tags):raise ValueError('Refusing untagged bucket '+b)
+        for page in s3.get_paginator('list_objects_v2').paginate(Bucket=b):
+            objs=[{'Key':o['Key']} for o in page.get('Contents',[])]
+            if objs:s3.delete_objects(Bucket=b,Delete={'Objects':objs})
+        s3.delete_bucket(Bucket=b)
     state_path(c).unlink(missing_ok=True)
-    (TF_ROOT / 'generated.auto.tfvars.json').unlink(missing_ok=True)
-    print('Terraform destroyed the named lab resources. Local deployment secrets were removed.')
-
+    print('Stack and four lab buckets removed. Remove local token/state backups separately.')
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['plan', 'deploy', 'links', 'seed', 'reset', 'evidence', 'failures', 'replay', 'freeze', 'unfreeze', 'cleanup'])
-    parser.add_argument('--config', default='config.json')
-    parser.add_argument('--job')
-    parser.add_argument('--dest', default='evidence')
-    args = parser.parse_args()
-    config = load_config(args.config)
-    if args.command == 'plan':
-        plan(config)
-        return
-    if args.command == 'deploy':
-        deploy(config)
-        return
-    state = require_state(config)
-    if args.command == 'links':
-        print_launch_links(state)
-        return
-    session = clients(config)
-    if args.command == 'cleanup':
-        cleanup(config, state)
-    elif args.command == 'seed':
-        seed(session, state)
-        print('Synthetic fixtures seeded.')
-    elif args.command == 'reset':
-        reset(session, state)
-    elif args.command == 'evidence':
-        if not args.job:
-            raise ValueError('--job is required')
-        evidence(session, config, state, args.job, args.dest)
-    elif args.command == 'failures':
-        failures(session, state)
-    elif args.command == 'replay':
-        if not args.job:
-            raise ValueError('--job is required')
-        replay(session, state, args.job)
-    elif args.command == 'freeze':
-        freeze(session, state, True)
-    elif args.command == 'unfreeze':
-        freeze(session, state, False)
-
-
-if __name__ == '__main__':
-    main()
+    p=argparse.ArgumentParser();p.add_argument('command',choices=['deploy','evidence','freeze','unfreeze','cleanup']);p.add_argument('--config',default='config.json');p.add_argument('--job');p.add_argument('--dest',default='evidence');a=p.parse_args();c=load_config(a.config)
+    if a.command=='deploy':deploy(c);return
+    s=clients(c);path=state_path(c);state=json.loads(path.read_text()) if path.exists() else {}
+    if a.command=='cleanup':cleanup(s,c,state);return
+    if a.command in ('freeze','unfreeze'):
+        lam=s.client('lambda')
+        if a.command=='freeze':lam.put_function_concurrency(FunctionName=c['name']+'-bridge',ReservedConcurrentExecutions=0)
+        else:lam.delete_function_concurrency(FunctionName=c['name']+'-bridge')
+        print(a.command,'complete');return
+    if not a.job:raise ValueError('--job is required')
+    evidence(s,c,state,a.job,a.dest)
+if __name__=='__main__':main()
