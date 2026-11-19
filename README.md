@@ -16,12 +16,10 @@ Converse API.
 
 ## Project Architecture
 
-- [`cloudkick-lab/docs/BASELINE.md`](cloudkick-lab/docs/BASELINE.md) —
-  authoritative scenario, architecture, trust boundaries and demo design.
-- [`cloudkick-lab/docs/IMPLEMENTATION_BACKLOG.md`](cloudkick-lab/docs/IMPLEMENTATION_BACKLOG.md)
-  — ordered implementation work and acceptance gates.
 - [`cloudkick-lab/docs/AWS_DEPLOYMENT_RUNBOOK.md`](cloudkick-lab/docs/AWS_DEPLOYMENT_RUNBOOK.md)
   — step-by-step sandbox deployment, validation, repair and teardown.
+- [`cloudkick-lab/docs/IMPLEMENTATION_BACKLOG.md`](cloudkick-lab/docs/IMPLEMENTATION_BACKLOG.md)
+  — ordered implementation work and acceptance gates.
 - [`cloudkick-lab/docs/decisions/0001-converse-primary.md`](cloudkick-lab/docs/decisions/0001-converse-primary.md)
   — engine decision.
 - [`cloudkick-lab/README.md`](cloudkick-lab/README.md) — deployment and operator usage.
